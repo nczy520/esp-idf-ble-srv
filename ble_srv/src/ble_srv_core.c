@@ -22,8 +22,8 @@
 static const char *TAG = "BLE_SRV";
 
 #define BLE_SRV_NAME_PREFIX         CONFIG_BLE_SRV_NAME_PREFIX
-#define BLE_SRV_ADV_INTERVAL_MIN    0x0020
-#define BLE_SRV_ADV_INTERVAL_MAX    0x0040
+#define BLE_SRV_ADV_INTERVAL_MIN    (CONFIG_BLE_SRV_ADV_INTERVAL_MIN * 1000 / 625)
+#define BLE_SRV_ADV_INTERVAL_MAX    (CONFIG_BLE_SRV_ADV_INTERVAL_MAX * 1000 / 625)
 
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static bool s_advertising = false;

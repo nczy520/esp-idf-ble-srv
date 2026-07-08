@@ -198,27 +198,53 @@ class BLEDeviceManagerClient:
         self.ota_status = None
         self.ota_progress_callback = None
 
-    async def scan(self, timeout=5):
-        print(f"扫描 BLE 设备...")
+    async def scan(self, timeout=3, select=False):
+        print(f"扫描 BLE 设备（超时 {timeout}s）...")
         devices = await BleakScanner.discover(timeout=timeout)
-        esp32_devices = []
+        matched = []
         for d in devices:
             if d.name and (self.device_name is None or d.name.startswith(self.device_name)):
-                esp32_devices.append(d)
-                print(f"  发现: {d.name} ({d.address})")
-        if not esp32_devices:
-            print("未发现 ESP32 BLE 设备")
+                matched.append(d)
+
+        if not matched:
+            print("未发现匹配的 BLE 设备")
             return None
-        if len(esp32_devices) == 1:
-            return esp32_devices[0]
-        print(f"\n发现 {len(esp32_devices)} 个设备，自动选择第一个:")
-        for i, d in enumerate(esp32_devices):
-            print(f"  {i+1}. {d.name} ({d.address})")
-        return esp32_devices[0]
+
+        print(f"\n发现 {len(matched)} 个匹配设备:")
+        for i, d in enumerate(matched):
+            rssi_str = ""
+            if hasattr(d, 'rssi') and d.rssi is not None:
+                rssi_str = f"  RSSI: {d.rssi} dBm"
+            print(f"  {i + 1}. {d.name} ({d.address}){rssi_str}")
+
+        if not select:
+            if len(matched) == 1:
+                print(f"\n仅发现一个设备，自动选择: {matched[0].name} ({matched[0].address})")
+                return matched[0]
+            return matched
+
+        if len(matched) == 1:
+            print(f"\n仅发现一个设备，自动选择: {matched[0].name} ({matched[0].address})")
+            return matched[0]
+
+        while True:
+            try:
+                choice = input(f"\n请选择设备 [1-{len(matched)}] (q 退出): ").strip()
+                if choice.lower() == 'q':
+                    return None
+                idx = int(choice) - 1
+                if 0 <= idx < len(matched):
+                    return matched[idx]
+                print(f"无效选择，请输入 1-{len(matched)} 之间的数字")
+            except ValueError:
+                print("无效输入，请输入数字或 q 退出")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return None
 
     async def connect(self, device=None):
         if device is None:
-            device = await self.scan()
+            device = await self.scan(select=True)
             if device is None:
                 return False
 
@@ -435,6 +461,9 @@ class BLEDeviceManagerClient:
             return False
 
     async def wifi_connect(self, ssid, password=""):
+        if not ssid or not ssid.strip():
+            print("SSID 不能为空")
+            return False
         if not self.client or not self.client.is_connected:
             print("未连接设备")
             return False
@@ -626,9 +655,15 @@ class BLEDeviceManagerClient:
 async def main():
     parser = argparse.ArgumentParser(description='ESP32 BLE Device Manager Client')
     parser.add_argument('-d', '--device', help='设备名称或地址')
-    parser.add_argument('-c', '--command', required=True,
-                        choices=['info', 'memory', 'cpu', 'flash', 'partition', 'restart', 'ota', 'wifi-status', 'wifi-connect', 'wifi-forget', 'ntp-sync', 'led-on', 'led-off', 'led-color', 'led-status', 'led-effect'],
-                        help='执行的命令')
+    cmd_choices = ['scan', 'info', 'memory', 'cpu', 'flash', 'partition', 'restart',
+                   'ota', 'wifi-status', 'wifi-connect', 'wifi-forget', 'ntp-sync',
+                   'led-on', 'led-off', 'led-color', 'led-status', 'led-effect']
+    cmd_group = parser.add_mutually_exclusive_group(required=True)
+    cmd_group.add_argument('-c', choices=cmd_choices,
+                           metavar='{' + ','.join(cmd_choices) + '}',
+                           dest='command', help='执行的命令')
+    cmd_group.add_argument('--command', choices=cmd_choices,
+                           metavar='', dest='command', help='执行的命令, 同 -c')
     parser.add_argument('-f', '--firmware', help='OTA固件文件路径')
     parser.add_argument('--ssid', help='WiFi SSID')
     parser.add_argument('--password', help='WiFi密码')
@@ -636,13 +671,32 @@ async def main():
     parser.add_argument('--effect', choices=['none', 'breath', 'blink', 'rainbow', 'strobe'],
                         help='LED特效类型')
     parser.add_argument('--speed', type=int, default=50, help='LED特效速度（1-255，默认50）')
+    parser.add_argument('--timeout', type=int, default=3, help='扫描超时时间（秒，默认3）')
 
     args = parser.parse_args()
 
     client = BLEDeviceManagerClient(device_name=args.device)
     connected = False
 
+    if args.command == 'wifi-connect' and not args.ssid:
+        print("请指定WiFi SSID: --ssid <SSID>")
+        return
+    if args.command == 'ota' and not args.firmware:
+        print("请指定固件文件路径: -f <firmware.bin>")
+        return
+    if args.command == 'led-color' and not args.color:
+        print("请指定LED颜色: --color AABBCC（如FF0000=红色）")
+        return
+    if args.command == 'led-effect' and not args.effect:
+        print("请指定LED特效: --effect <类型>")
+        print("可用特效: none(无), breath(呼吸灯), blink(闪烁), rainbow(彩虹), strobe(频闪)")
+        return
+
     try:
+        if args.command == 'scan':
+            await client.scan(timeout=args.timeout)
+            return
+
         connected = await client.connect()
         if not connected:
             return
@@ -683,9 +737,6 @@ async def main():
             await client.restart_device()
 
         elif args.command == 'ota':
-            if not args.firmware:
-                print("请指定固件文件路径: -f <firmware.bin>")
-                return
             await client.ota_update(args.firmware)
 
         elif args.command == 'wifi-status':
@@ -695,9 +746,6 @@ async def main():
                 print(status)
 
         elif args.command == 'wifi-connect':
-            if not args.ssid:
-                print("请指定WiFi SSID: --ssid <SSID>")
-                return
             await client.wifi_connect(args.ssid, args.password or "")
 
         elif args.command == 'wifi-forget':
@@ -713,19 +761,12 @@ async def main():
             await client.led_off()
 
         elif args.command == 'led-color':
-            if not args.color:
-                print("请指定LED颜色: --color AABBCC（如FF0000=红色）")
-                return
             await client.led_set_color(args.color)
 
         elif args.command == 'led-status':
             await client.led_status()
 
         elif args.command == 'led-effect':
-            if not args.effect:
-                print("请指定LED特效: --effect <类型>")
-                print("可用特效: none(无), breath(呼吸灯), blink(闪烁), rainbow(彩虹), strobe(频闪)")
-                return
             effect_map = {'none': 0, 'breath': 1, 'blink': 2, 'rainbow': 3, 'strobe': 4}
             effect_id = effect_map[args.effect]
             await client.led_set_effect(effect_id, args.speed)

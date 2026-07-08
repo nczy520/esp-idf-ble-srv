@@ -34,6 +34,11 @@ bool ble_srv_ntp_sync(void)
 {
     ESP_LOGI(TAG, "Starting NTP time synchronization...");
 
+    if (esp_sntp_enabled()) {
+        ESP_LOGI(TAG, "SNTP already running, stopping first");
+        esp_sntp_stop();
+    }
+
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
 
     for (int i = 0; i < sizeof(ntp_servers) / sizeof(ntp_servers[0]); i++) {

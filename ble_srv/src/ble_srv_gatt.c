@@ -15,6 +15,8 @@
 
 static const char *TAG = "BLE_SRV_GATT";
 
+static uint8_t s_partition_index = 0;
+
 uint16_t g_srv_cmd_chr_val_handle = 0;
 uint16_t g_srv_info_chr_val_handle = 0;
 uint16_t g_srv_memory_chr_val_handle = 0;
@@ -234,8 +236,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             return BLE_ATT_ERR_UNLIKELY;
         } else if (attr_handle == g_srv_partition_chr_val_handle) {
             ble_srv_partition_info_t info;
-            static uint8_t partition_index = 0;
-            if (ble_srv_get_partition_info(partition_index, &info)) {
+            if (ble_srv_get_partition_info(s_partition_index, &info)) {
                 rc = os_mbuf_append(ctxt->om, &info, sizeof(info));
                 return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
             }
@@ -324,9 +325,8 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         } else if (attr_handle == g_ota_fw_data_chr_val_handle) {
             ble_srv_ota_process_fw_data(buf, data_len);
         } else if (attr_handle == g_srv_partition_chr_val_handle) {
-            static uint8_t partition_index = 0;
             if (data_len > 0) {
-                partition_index = buf[0];
+                s_partition_index = buf[0];
             }
         } else if (attr_handle == g_srv_restart_chr_val_handle) {
             vTaskDelay(pdMS_TO_TICKS(100));

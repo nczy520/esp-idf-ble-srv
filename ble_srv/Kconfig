@@ -46,8 +46,18 @@ menu "BLE Service"
         default n
         depends on BLE_SRV_ENABLED
         help
-            Enable WS2812 RGB LED control via BLE. GPIO pin is auto-selected per target:
-            ESP32-S3: GPIO21, ESP32-C3/C6/H2: GPIO10, ESP32: GPIO2, ESP32-S2: GPIO18
+            Enable WS2812 RGB LED control via BLE.
+
+    config BLE_SRV_LED_GPIO
+        int "WS2812 LED GPIO Pin"
+        default 21 if IDF_TARGET_ESP32S3
+        default 10 if IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32H2
+        default 18 if IDF_TARGET_ESP32S2
+        default 2
+        depends on BLE_SRV_LED
+        help
+            GPIO pin number for WS2812 LED data line.
+            Default values per target: ESP32-S3=21, ESP32-C3/C6/H2=10, ESP32=2, ESP32-S2=18
 
 endmenu
 
