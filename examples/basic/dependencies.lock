@@ -1,0 +1,27 @@
+dependencies:
+  idf:
+    source:
+      type: idf
+    version: 6.0.2
+  michmich/esp-idf-wifi-provisioner:
+    component_hash: 4097d69b49e4781f951ceb80e2966daebc2dd47794c306059797abf4c9ecf1f1
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32s2
+    - esp32s3
+    - esp32c3
+    - esp32c6
+    version: 0.4.0
+direct_dependencies:
+- idf
+- michmich/esp-idf-wifi-provisioner
+manifest_hash: 1ed791d0492fd7b34e49dd8330b7d6e39a85b9545a80f370aa7be236f89fc2a3
+target: esp32s3
+version: 3.0.0
