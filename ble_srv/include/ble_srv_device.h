@@ -38,6 +38,9 @@ typedef struct __attribute__((packed)) {
     uint32_t heap_free;
     uint32_t heap_min_free;
     uint32_t stack_high_watermark;
+    uint32_t psram_total;
+    uint32_t psram_free;
+    uint32_t psram_min_free;
 } ble_srv_memory_info_t;
 
 typedef struct __attribute__((packed)) {

@@ -17,17 +17,21 @@ extern uint16_t g_srv_flash_chr_val_handle;
 extern uint16_t g_srv_partition_chr_val_handle;
 extern uint16_t g_srv_restart_chr_val_handle;
 
-extern uint16_t g_ota_cmd_chr_val_handle;
-extern uint16_t g_ota_fw_data_chr_val_handle;
+extern uint16_t g_ota_bt_cmd_chr_val_handle;
+extern uint16_t g_ota_bt_fw_data_chr_val_handle;
 extern uint16_t g_ota_status_chr_val_handle;
 extern bool g_ota_status_notify_enabled;
+
+#ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
+extern uint16_t g_ota_url_chr_val_handle;
+#endif
 
 extern uint16_t g_wifi_config_chr_val_handle;
 extern uint16_t g_wifi_status_chr_val_handle;
 extern uint16_t g_wifi_ctrl_chr_val_handle;
 extern bool g_wifi_status_notify_enabled;
 
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
 extern uint16_t g_led_ctrl_chr_val_handle;
 extern uint16_t g_led_color_chr_val_handle;
 extern uint16_t g_led_effect_chr_val_handle;

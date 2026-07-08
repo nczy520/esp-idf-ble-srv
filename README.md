@@ -2,7 +2,7 @@
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 1.0.3 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 1.1.0 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
@@ -24,7 +24,7 @@ ESP32 / ESP32-S2 / ESP32-S3 / ESP32-C3 / ESP32-C6 / ESP32-H2
 将 `ble_srv` 目录复制到你的项目 `components/` 下，或通过 ESP-IDF 组件管理器引入：
 
 ```bash
-idf.py add-dependency "ble_srv^1.0.3"
+idf.py add-dependency "ble_srv^1.1.0"
 ```
 
 ### 2. 配置 menuconfig

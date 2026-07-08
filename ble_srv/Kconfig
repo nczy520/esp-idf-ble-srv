@@ -6,103 +6,143 @@ menu "BLE Service"
         help
             Enable BLE Service component for device management and OTA over BLE
 
-    config BLE_SRV_NAME_PREFIX
-        string "BLE Device Name Prefix"
-        default "BLE-SRV"
-        depends on BLE_SRV_ENABLED
-        help
-            BLE device name prefix, full name will be prefix + last 3 bytes of MAC address
+    if BLE_SRV_ENABLED
 
-    config BLE_SRV_ADV_INTERVAL_MIN
-        int "Advertising Interval Min (ms)"
-        default 32
-        depends on BLE_SRV_ENABLED
-        help
-            BLE advertising interval minimum in milliseconds (0x0020 = 32ms)
+    menu "Advertising"
+        config BLE_SRV_ADV_NAME_PREFIX
+            string "Device Name Prefix"
+            default "BLE-SRV"
+            help
+                BLE device name prefix, full name will be prefix + last 3 bytes of MAC address
 
-    config BLE_SRV_ADV_INTERVAL_MAX
-        int "Advertising Interval Max (ms)"
-        default 64
-        depends on BLE_SRV_ENABLED
-        help
-            BLE advertising interval maximum in milliseconds (0x0040 = 64ms)
+        config BLE_SRV_ADV_INTERVAL_MIN
+            int "Advertising Interval Min (ms)"
+            default 32
+            help
+                BLE advertising interval minimum in milliseconds (0x0020 = 32ms)
 
-    config BLE_SRV_WIFI_PROVISIONER
-        bool "Enable WiFi Provisioner"
-        default n
-        depends on BLE_SRV_ENABLED
-        help
-            Enable WiFi provisioner using MichMich/esp-idf-wifi-provisioner
+        config BLE_SRV_ADV_INTERVAL_MAX
+            int "Advertising Interval Max (ms)"
+            default 64
+            help
+                BLE advertising interval maximum in milliseconds (0x0040 = 64ms)
+    endmenu
 
-    config BLE_SRV_NTP_SYNC
-        bool "Enable NTP Time Sync"
-        default n
-        depends on BLE_SRV_ENABLED
-        help
-            Enable automatic NTP time synchronization after WiFi connection
+    menu "OTA Bluetooth"
+        config BLE_SRV_OTA_BT_ENABLED
+            bool "Enable Bluetooth OTA"
+            default y
+            help
+                Enable firmware update via BLE GATT characteristics.
 
-    config BLE_SRV_LED
-        bool "Enable WS2812 LED Control"
-        default n
-        depends on BLE_SRV_ENABLED
-        help
-            Enable WS2812 RGB LED control via BLE.
+        config BLE_SRV_OTA_BT_NOTIFY_INTERVAL
+            int "Progress Notify Interval (writes)"
+            default 10
+            help
+                Number of firmware data writes between progress notifications.
+                Smaller value = smoother progress bar but more BLE overhead.
+                Larger value = less overhead but progress updates less frequently.
+    endmenu
 
-    config BLE_SRV_LED_GPIO
-        int "WS2812 LED GPIO Pin"
-        default 21 if IDF_TARGET_ESP32S3
-        default 10 if IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32H2
-        default 18 if IDF_TARGET_ESP32S2
-        default 2
-        depends on BLE_SRV_LED
-        help
-            GPIO pin number for WS2812 LED data line.
-            Default values per target: ESP32-S3=21, ESP32-C3/C6/H2=10, ESP32=2, ESP32-S2=18
+    menu "OTA URL"
+        config BLE_SRV_OTA_URL_ENABLED
+            bool "Enable URL OTA"
+            default n
+            depends on BLE_SRV_WIFI_ENABLED
+            help
+                Enable firmware update via HTTPS URL download. Requires WiFi connection.
+                Before downloading, the device reads the firmware version from the
+                remote binary header and compares it with the current version.
+                Only downloads if the remote version is newer.
 
-endmenu
+        config BLE_SRV_OTA_URL_DEFAULT
+            string "Default Firmware URL"
+            default ""
+            depends on BLE_SRV_OTA_URL_ENABLED
+            help
+                Default firmware URL for URL OTA update.
+                Can be overridden at runtime via BLE command.
+                Example: https://example.com/firmware.bin
+    endmenu
 
-menu "NTP Configuration"
+    menu "WiFi"
+        config BLE_SRV_WIFI_ENABLED
+            bool "Enable WiFi Provisioner"
+            default n
+            help
+                Enable WiFi provisioner using MichMich/esp-idf-wifi-provisioner
+    endmenu
 
-    config BLE_SRV_NTP_TIMEZONE
-        string "NTP Timezone"
-        default "CST-8"
-        depends on BLE_SRV_NTP_SYNC
-        help
-            Timezone string for NTP synchronization
+    menu "NTP"
+        config BLE_SRV_NTP_ENABLED
+            bool "Enable NTP Time Sync"
+            default n
+            depends on BLE_SRV_WIFI_ENABLED
+            help
+                Enable automatic NTP time synchronization after WiFi connection
 
-    config BLE_SRV_NTP_SERVER_1
-        string "NTP Server 1"
-        default "ntp.aliyun.com"
-        depends on BLE_SRV_NTP_SYNC
-        help
-            Primary NTP server
+        config BLE_SRV_NTP_TIMEZONE
+            string "Timezone"
+            default "CST-8"
+            depends on BLE_SRV_NTP_ENABLED
+            help
+                Timezone string for NTP synchronization
 
-    config BLE_SRV_NTP_SERVER_2
-        string "NTP Server 2"
-        default "time1.aliyun.com"
-        depends on BLE_SRV_NTP_SYNC
-        help
-            Secondary NTP server
+        config BLE_SRV_NTP_SERVER_1
+            string "NTP Server 1"
+            default "ntp.aliyun.com"
+            depends on BLE_SRV_NTP_ENABLED
+            help
+                Primary NTP server
 
-    config BLE_SRV_NTP_SERVER_3
-        string "NTP Server 3"
-        default "cn.ntp.org.cn"
-        depends on BLE_SRV_NTP_SYNC
-        help
-            Tertiary NTP server
+        config BLE_SRV_NTP_SERVER_2
+            string "NTP Server 2"
+            default "time1.aliyun.com"
+            depends on BLE_SRV_NTP_ENABLED
+            help
+                Secondary NTP server
 
-    config BLE_SRV_NTP_SERVER_4
-        string "NTP Server 4"
-        default "time.windows.com"
-        depends on BLE_SRV_NTP_SYNC
-        help
-            Fourth NTP server
+        config BLE_SRV_NTP_SERVER_3
+            string "NTP Server 3"
+            default "cn.ntp.org.cn"
+            depends on BLE_SRV_NTP_ENABLED
+            help
+                Tertiary NTP server
 
-    config BLE_SRV_NTP_SERVER_5
-        string "NTP Server 5"
-        default "pool.ntp.org"
-        depends on BLE_SRV_NTP_SYNC
-        help
-            Fifth NTP server
+        config BLE_SRV_NTP_SERVER_4
+            string "NTP Server 4"
+            default "time.windows.com"
+            depends on BLE_SRV_NTP_ENABLED
+            help
+                Fourth NTP server
+
+        config BLE_SRV_NTP_SERVER_5
+            string "NTP Server 5"
+            default "pool.ntp.org"
+            depends on BLE_SRV_NTP_ENABLED
+            help
+                Fifth NTP server
+    endmenu
+
+    menu "LED"
+        config BLE_SRV_LED_ENABLED
+            bool "Enable WS2812 LED Control"
+            default n
+            help
+                Enable WS2812 RGB LED control via BLE.
+
+        config BLE_SRV_LED_GPIO
+            int "WS2812 LED GPIO Pin"
+            default 21 if IDF_TARGET_ESP32S3
+            default 10 if IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32H2
+            default 18 if IDF_TARGET_ESP32S2
+            default 2
+            depends on BLE_SRV_LED_ENABLED
+            help
+                GPIO pin number for WS2812 LED data line.
+                Default values per target: ESP32-S3=21, ESP32-C3/C6/H2=10, ESP32=2, ESP32-S2=18
+    endmenu
+
+    endif
 
 endmenu

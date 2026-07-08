@@ -39,7 +39,7 @@ typedef struct __attribute__((packed)) {
     uint8_t blue;
 } ble_led_status_t;
 
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
 bool ble_srv_led_init(void);
 void ble_srv_led_deinit(void);
 bool ble_srv_led_set_on(bool on);

@@ -94,9 +94,20 @@ bool ble_srv_get_memory_info(ble_srv_memory_info_t *info)
     info->heap_min_free = esp_get_minimum_free_heap_size();
     info->stack_high_watermark = (uint32_t)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t);
 
-    ESP_LOGI(TAG, "Memory: total=%lu, free=%lu, min_free=%lu, stack_hwm=%lu",
+#if CONFIG_SPIRAM
+    info->psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    info->psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    info->psram_min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+#else
+    info->psram_total = 0;
+    info->psram_free = 0;
+    info->psram_min_free = 0;
+#endif
+
+    ESP_LOGI(TAG, "Memory: total=%lu, free=%lu, min_free=%lu, stack_hwm=%lu, psram_total=%lu, psram_free=%lu",
              (unsigned long)info->heap_total, (unsigned long)info->heap_free,
-             (unsigned long)info->heap_min_free, (unsigned long)info->stack_high_watermark);
+             (unsigned long)info->heap_min_free, (unsigned long)info->stack_high_watermark,
+             (unsigned long)info->psram_total, (unsigned long)info->psram_free);
 
     return true;
 }

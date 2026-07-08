@@ -28,7 +28,7 @@ typedef struct __attribute__((packed)) {
     uint32_t ip_address;
 } ble_wifi_status_t;
 
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
 bool ble_srv_wifi_provisioner_init(void);
 bool ble_srv_wifi_is_connected(void);
 void ble_srv_wifi_provisioner_deinit(void);
@@ -37,7 +37,7 @@ bool ble_srv_wifi_forget(void);
 bool ble_srv_wifi_get_status(ble_wifi_status_t *status);
 #endif
 
-#ifdef CONFIG_BLE_SRV_NTP_SYNC
+#ifdef CONFIG_BLE_SRV_NTP_ENABLED
 bool ble_srv_ntp_sync(void);
 void ble_srv_ntp_deinit(void);
 #endif

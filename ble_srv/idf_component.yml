@@ -1,5 +1,5 @@
 name: ble_srv
-version: "1.0.3"
+version: "1.1.0"
 description: BLE device management and OTA service for ESP32 using NimBLE
 url: https://github.com/your-org/esp-idf-ble-srv
 license: Apache-2.0

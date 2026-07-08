@@ -1,8 +1,12 @@
 #include "ble_srv_gatt.h"
-#include "ble_srv_ota.h"
+#include "ble_srv_ota_common.h"
+#include "ble_srv_ota_bt.h"
 #include "ble_srv_device.h"
 #include "ble_srv_wifi.h"
 #include "ble_srv_led.h"
+#ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
+#include "ble_srv_ota_url.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +20,7 @@
 static const char *TAG = "BLE_SRV_GATT";
 
 static uint8_t s_partition_index = 0;
+static uint8_t s_write_buf[512];
 
 uint16_t g_srv_cmd_chr_val_handle = 0;
 uint16_t g_srv_info_chr_val_handle = 0;
@@ -25,17 +30,21 @@ uint16_t g_srv_flash_chr_val_handle = 0;
 uint16_t g_srv_partition_chr_val_handle = 0;
 uint16_t g_srv_restart_chr_val_handle = 0;
 
-uint16_t g_ota_cmd_chr_val_handle = 0;
-uint16_t g_ota_fw_data_chr_val_handle = 0;
+uint16_t g_ota_bt_cmd_chr_val_handle = 0;
+uint16_t g_ota_bt_fw_data_chr_val_handle = 0;
 uint16_t g_ota_status_chr_val_handle = 0;
 bool g_ota_status_notify_enabled = false;
+
+#ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
+uint16_t g_ota_url_chr_val_handle = 0;
+#endif
 
 uint16_t g_wifi_config_chr_val_handle = 0;
 uint16_t g_wifi_status_chr_val_handle = 0;
 uint16_t g_wifi_ctrl_chr_val_handle = 0;
 bool g_wifi_status_notify_enabled = false;
 
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
 uint16_t g_led_ctrl_chr_val_handle = 0;
 uint16_t g_led_color_chr_val_handle = 0;
 uint16_t g_led_effect_chr_val_handle = 0;
@@ -51,16 +60,20 @@ static const ble_uuid16_t s_srv_partition_chr_uuid = BLE_UUID16_INIT(BLE_SRV_PAR
 static const ble_uuid16_t s_srv_restart_chr_uuid  = BLE_UUID16_INIT(BLE_SRV_RESTART_CHAR_UUID);
 
 static const ble_uuid16_t s_ota_svc_uuid          = BLE_UUID16_INIT(BLE_OTA_SVC_UUID);
-static const ble_uuid16_t s_ota_cmd_chr_uuid      = BLE_UUID16_INIT(BLE_OTA_CMD_CHAR_UUID);
-static const ble_uuid16_t s_ota_fw_data_chr_uuid  = BLE_UUID16_INIT(BLE_OTA_FW_DATA_CHAR_UUID);
+static const ble_uuid16_t s_ota_bt_cmd_chr_uuid   = BLE_UUID16_INIT(BLE_OTA_BT_CMD_CHAR_UUID);
+static const ble_uuid16_t s_ota_bt_fw_data_chr_uuid = BLE_UUID16_INIT(BLE_OTA_BT_FW_DATA_CHAR_UUID);
 static const ble_uuid16_t s_ota_status_chr_uuid   = BLE_UUID16_INIT(BLE_OTA_STATUS_CHAR_UUID);
+
+#ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
+static const ble_uuid16_t s_ota_url_chr_uuid      = BLE_UUID16_INIT(BLE_OTA_URL_CMD_CHAR_UUID);
+#endif
 
 static const ble_uuid16_t s_wifi_svc_uuid          = BLE_UUID16_INIT(BLE_WIFI_SVC_UUID);
 static const ble_uuid16_t s_wifi_config_chr_uuid   = BLE_UUID16_INIT(BLE_WIFI_CONFIG_CHAR_UUID);
 static const ble_uuid16_t s_wifi_status_chr_uuid   = BLE_UUID16_INIT(BLE_WIFI_STATUS_CHAR_UUID);
 static const ble_uuid16_t s_wifi_ctrl_chr_uuid     = BLE_UUID16_INIT(BLE_WIFI_CTRL_CHAR_UUID);
 
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
 static const ble_uuid16_t s_led_svc_uuid           = BLE_UUID16_INIT(BLE_LED_SVC_UUID);
 static const ble_uuid16_t s_led_ctrl_chr_uuid      = BLE_UUID16_INIT(BLE_LED_CTRL_CHAR_UUID);
 static const ble_uuid16_t s_led_color_chr_uuid     = BLE_UUID16_INIT(BLE_LED_COLOR_CHAR_UUID);
@@ -122,16 +135,16 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
         .uuid = &s_ota_svc_uuid.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
             {
-                .uuid = &s_ota_cmd_chr_uuid.u,
+                .uuid = &s_ota_bt_cmd_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-                .val_handle = &g_ota_cmd_chr_val_handle,
+                .val_handle = &g_ota_bt_cmd_chr_val_handle,
             },
             {
-                .uuid = &s_ota_fw_data_chr_uuid.u,
+                .uuid = &s_ota_bt_fw_data_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-                .val_handle = &g_ota_fw_data_chr_val_handle,
+                .val_handle = &g_ota_bt_fw_data_chr_val_handle,
             },
             {
                 .uuid = &s_ota_status_chr_uuid.u,
@@ -139,10 +152,18 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &g_ota_status_chr_val_handle,
             },
+#ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
+            {
+                .uuid = &s_ota_url_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .val_handle = &g_ota_url_chr_val_handle,
+            },
+#endif
             { 0 },
         },
     },
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &s_wifi_svc_uuid.u,
@@ -169,7 +190,7 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
         },
     },
 #endif
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &s_led_svc_uuid.u,
@@ -249,7 +270,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             }
             return BLE_ATT_ERR_UNLIKELY;
         }
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
         else if (attr_handle == g_wifi_status_chr_val_handle) {
             ble_wifi_status_t status;
             if (ble_srv_wifi_get_status(&status)) {
@@ -259,7 +280,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             return BLE_ATT_ERR_UNLIKELY;
         }
 #endif
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
         else if (attr_handle == g_led_ctrl_chr_val_handle) {
             ble_led_status_t status;
             if (ble_srv_led_get_status(&status)) {
@@ -293,24 +314,18 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
     case BLE_GATT_ACCESS_OP_WRITE_CHR: {
         uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
-        if (om_len == 0) {
+        if (om_len == 0 || om_len > sizeof(s_write_buf)) {
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
 
-        uint8_t *buf = malloc(om_len);
-        if (!buf) {
-            return BLE_ATT_ERR_INSUFFICIENT_RES;
-        }
-
         uint16_t data_len = 0;
-        rc = ble_hs_mbuf_to_flat(ctxt->om, buf, om_len, &data_len);
+        rc = ble_hs_mbuf_to_flat(ctxt->om, s_write_buf, om_len, &data_len);
         if (rc != 0) {
-            free(buf);
             return BLE_ATT_ERR_UNLIKELY;
         }
 
         if (attr_handle == g_srv_cmd_chr_val_handle) {
-            ble_srv_cmd_t cmd = (ble_srv_cmd_t)buf[0];
+            ble_srv_cmd_t cmd = (ble_srv_cmd_t)s_write_buf[0];
             ESP_LOGI(TAG, "SRV command: 0x%02X", cmd);
             switch (cmd) {
             case BLE_SRV_CMD_RESTART:
@@ -320,32 +335,63 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             default:
                 break;
             }
-        } else if (attr_handle == g_ota_cmd_chr_val_handle) {
-            ble_srv_dispatch_ota_cmd(buf, data_len);
-        } else if (attr_handle == g_ota_fw_data_chr_val_handle) {
-            ble_srv_ota_process_fw_data(buf, data_len);
-        } else if (attr_handle == g_srv_partition_chr_val_handle) {
+        } else if (attr_handle == g_ota_bt_cmd_chr_val_handle) {
+            ble_srv_ota_bt_dispatch_cmd(s_write_buf, data_len);
+        } else if (attr_handle == g_ota_bt_fw_data_chr_val_handle) {
+            ble_srv_ota_bt_process_fw_data(s_write_buf, data_len);
+        }
+#ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
+        else if (attr_handle == g_ota_url_chr_val_handle) {
+            if (data_len < 1) {
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            }
+            ble_ota_url_cmd_t cmd = (ble_ota_url_cmd_t)s_write_buf[0];
+            switch (cmd) {
+            case BLE_OTA_URL_CMD_START_URL:
+                if (data_len > 1) {
+                    uint16_t url_len = data_len - 1;
+                    if (url_len > BLE_OTA_URL_MAX_URL_LEN) {
+                        url_len = BLE_OTA_URL_MAX_URL_LEN;
+                    }
+                    char url[BLE_OTA_URL_MAX_URL_LEN + 1] = {0};
+                    memcpy(url, s_write_buf + 1, url_len);
+                    url[url_len] = '\0';
+                    ble_srv_ota_url_start(url);
+                }
+                break;
+            case BLE_OTA_URL_CMD_START_DEFAULT:
+                ble_srv_ota_url_start_default();
+                break;
+            case BLE_OTA_URL_CMD_ABORT:
+                ble_srv_ota_url_abort();
+                break;
+            default:
+                break;
+            }
+        }
+#endif
+        else if (attr_handle == g_srv_partition_chr_val_handle) {
             if (data_len > 0) {
-                s_partition_index = buf[0];
+                s_partition_index = s_write_buf[0];
             }
         } else if (attr_handle == g_srv_restart_chr_val_handle) {
             vTaskDelay(pdMS_TO_TICKS(100));
             esp_restart();
         }
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
         else if (attr_handle == g_wifi_config_chr_val_handle) {
             if (data_len >= sizeof(ble_wifi_config_t)) {
-                const ble_wifi_config_t *wifi_cfg = (const ble_wifi_config_t *)buf;
+                const ble_wifi_config_t *wifi_cfg = (const ble_wifi_config_t *)s_write_buf;
                 ble_srv_wifi_connect(wifi_cfg->ssid, wifi_cfg->password);
             }
         } else if (attr_handle == g_wifi_ctrl_chr_val_handle) {
-            ble_wifi_ctrl_cmd_t cmd = (ble_wifi_ctrl_cmd_t)buf[0];
+            ble_wifi_ctrl_cmd_t cmd = (ble_wifi_ctrl_cmd_t)s_write_buf[0];
             switch (cmd) {
             case BLE_WIFI_CTRL_FORGET:
                 ble_srv_wifi_forget();
                 break;
             case BLE_WIFI_CTRL_NTP_SYNC:
-#ifdef CONFIG_BLE_SRV_NTP_SYNC
+#ifdef CONFIG_BLE_SRV_NTP_ENABLED
                 ble_srv_ntp_sync();
 #else
                 ESP_LOGW(TAG, "NTP sync not enabled");
@@ -356,9 +402,9 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             }
         }
 #endif
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
         else if (attr_handle == g_led_ctrl_chr_val_handle) {
-            ble_led_ctrl_t ctrl = (ble_led_ctrl_t)buf[0];
+            ble_led_ctrl_t ctrl = (ble_led_ctrl_t)s_write_buf[0];
             if (ctrl == BLE_LED_CTRL_ON) {
                 ble_srv_led_set_on(true);
             } else if (ctrl == BLE_LED_CTRL_OFF) {
@@ -366,19 +412,18 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             }
         } else if (attr_handle == g_led_color_chr_val_handle) {
             if (data_len >= 3) {
-                ble_srv_led_set_rgb(buf[0], buf[1], buf[2]);
+                ble_srv_led_set_rgb(s_write_buf[0], s_write_buf[1], s_write_buf[2]);
             }
         } else if (attr_handle == g_led_effect_chr_val_handle) {
             if (data_len >= sizeof(ble_led_effect_config_t)) {
-                const ble_led_effect_config_t *cfg = (const ble_led_effect_config_t *)buf;
+                const ble_led_effect_config_t *cfg = (const ble_led_effect_config_t *)s_write_buf;
                 ble_srv_led_set_effect((ble_led_effect_t)cfg->effect, cfg->speed);
             } else if (data_len >= 1) {
-                ble_srv_led_set_effect((ble_led_effect_t)buf[0], 50);
+                ble_srv_led_set_effect((ble_led_effect_t)s_write_buf[0], 50);
             }
         }
 #endif
 
-        free(buf);
         return 0;
     }
 

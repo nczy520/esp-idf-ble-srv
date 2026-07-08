@@ -1,6 +1,7 @@
 #include "ble_srv.h"
 #include "ble_srv_gatt.h"
-#include "ble_srv_ota.h"
+#include "ble_srv_ota_common.h"
+#include "ble_srv_ota_bt.h"
 #include "ble_srv_led.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@
 
 static const char *TAG = "BLE_SRV";
 
-#define BLE_SRV_NAME_PREFIX         CONFIG_BLE_SRV_NAME_PREFIX
+#define BLE_SRV_NAME_PREFIX         CONFIG_BLE_SRV_ADV_NAME_PREFIX
 #define BLE_SRV_ADV_INTERVAL_MIN    (CONFIG_BLE_SRV_ADV_INTERVAL_MIN * 1000 / 625)
 #define BLE_SRV_ADV_INTERVAL_MAX    (CONFIG_BLE_SRV_ADV_INTERVAL_MAX * 1000 / 625)
 
@@ -111,7 +112,7 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
-        ble_srv_ota_reset();
+        ble_srv_ota_bt_reset();
         vTaskDelay(pdMS_TO_TICKS(100));
         ble_srv_start_advertising();
         break;
@@ -127,7 +128,7 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         if (event->subscribe.attr_handle == g_ota_status_chr_val_handle) {
             g_ota_status_notify_enabled = event->subscribe.cur_notify;
         }
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
         else if (event->subscribe.attr_handle == g_wifi_status_chr_val_handle) {
             g_wifi_status_notify_enabled = event->subscribe.cur_notify;
         }
@@ -232,9 +233,9 @@ bool ble_srv_init(void)
 
     nimble_port_freertos_init(ble_srv_host_task);
 
-    ble_srv_ota_init();
+    ble_srv_ota_bt_init();
 
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
     ble_srv_led_init();
 #endif
 
@@ -246,9 +247,9 @@ void ble_srv_deinit(void)
 {
     ESP_LOGI(TAG, "Deinitializing BLE Service");
 
-    ble_srv_ota_reset();
+    ble_srv_ota_bt_reset();
 
-#ifdef CONFIG_BLE_SRV_LED
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
     ble_srv_led_deinit();
 #endif
 

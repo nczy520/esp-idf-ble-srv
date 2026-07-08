@@ -19,7 +19,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
     if (!ble_srv_wifi_provisioner_init()) {
         ESP_LOGE(TAG, "WiFi provisioner initialization failed");
         return;
@@ -33,12 +33,12 @@ void app_main(void)
 
     ESP_LOGI(TAG, "BLE Service Example started successfully");
 
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
     ESP_LOGI(TAG, "WiFi provisioner: started");
 #endif
 
     while (1) {
-#ifdef CONFIG_BLE_SRV_WIFI_PROVISIONER
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
         static bool last_wifi_connected = false;
         bool wifi_connected = ble_srv_wifi_is_connected();
         if (wifi_connected && !last_wifi_connected) {
