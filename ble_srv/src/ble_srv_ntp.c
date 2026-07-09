@@ -9,6 +9,7 @@
 
 static const char *TAG = "BLE_SRV_NTP";
 
+#ifdef CONFIG_BLE_SRV_NTP_ENABLED
 static const char *ntp_servers[] = {
     CONFIG_BLE_SRV_NTP_SERVER_1,
     CONFIG_BLE_SRV_NTP_SERVER_2,
@@ -16,6 +17,7 @@ static const char *ntp_servers[] = {
     CONFIG_BLE_SRV_NTP_SERVER_4,
     CONFIG_BLE_SRV_NTP_SERVER_5,
 };
+#endif
 
 static void sntp_time_sync_notification_cb(struct timeval *tv)
 {
@@ -32,6 +34,7 @@ static void sntp_time_sync_notification_cb(struct timeval *tv)
 
 bool ble_srv_ntp_sync(void)
 {
+#ifdef CONFIG_BLE_SRV_NTP_ENABLED
     ESP_LOGI(TAG, "Starting NTP time synchronization...");
 
     if (esp_sntp_enabled()) {
@@ -73,10 +76,16 @@ bool ble_srv_ntp_sync(void)
 
     ESP_LOGE(TAG, "NTP sync failed after %d retries", max_retry);
     return false;
+#else
+    ESP_LOGW(TAG, "NTP is not enabled in configuration");
+    return false;
+#endif
 }
 
 void ble_srv_ntp_deinit(void)
 {
+#ifdef CONFIG_BLE_SRV_NTP_ENABLED
     esp_sntp_stop();
     ESP_LOGI(TAG, "NTP deinitialized");
+#endif
 }

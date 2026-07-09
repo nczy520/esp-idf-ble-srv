@@ -8,6 +8,7 @@
 #include "ble_srv_wifi.h"
 #include "ble_srv_led.h"
 #include "ble_srv_device.h"
+#include "ble_srv_temp_sensor.h"
 
 #ifdef __cplusplus
 extern "C" {

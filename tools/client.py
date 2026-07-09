@@ -7,15 +7,17 @@ ESP32 BLE设备管理器客户端 - 命令行工具
   python client.py -c info -d 设备名
   python client.py -c ota-bt -f firmware.bin
   python client.py -c ota-url --url https://example.com/firmware.bin
+  python client.py -c temperature -d 设备名
 
 功能模块:
-  - ble_client/constants.py : UUID常量和命令码
-  - ble_client/models.py    : 数据结构类
-  - ble_client/client.py    : 核心BLE客户端基类
-  - ble_client/ota.py       : OTA功能混合类
-  - ble_client/wifi.py      : WiFi功能混合类
-  - ble_client/led.py       : LED功能混合类
-  - ble_client/__init__.py  : 完整客户端组合类
+  - ble_client/constants.py    : UUID常量和命令码
+  - ble_client/models.py       : 数据结构类
+  - ble_client/client.py       : 核心BLE客户端基类
+  - ble_client/ota.py          : OTA功能混合类
+  - ble_client/wifi.py         : WiFi功能混合类
+  - ble_client/led.py          : LED功能混合类
+  - ble_client/temperature.py  : 温度传感器混合类
+  - ble_client/__init__.py     : 完整客户端组合类
 """
 
 import asyncio
@@ -34,7 +36,7 @@ async def main():
     parser.add_argument('-d', '--device', help='设备名称或地址')
 
     cmd_choices = [
-        'scan', 'info', 'memory', 'cpu', 'flash', 'partition', 'restart',
+        'scan', 'info', 'memory', 'cpu', 'flash', 'partition', 'restart', 'temperature',
         'ota-bt', 'ota-url',
         'wifi-status', 'wifi-connect', 'wifi-forget', 'ntp-sync',
         'led-on', 'led-off', 'led-color', 'led-status', 'led-effect'
@@ -129,6 +131,17 @@ async def main():
 
         elif args.command == 'restart':
             await client.restart_device()
+
+        # 温度传感器命令
+        elif args.command == 'temperature':
+            temp = await client.read_temperature()
+            if temp is not None:
+                if temp <= -900.0:
+                    print("\n温度传感器: 不支持或未启用")
+                else:
+                    print(f"\n当前温度: {temp:.2f}°C")
+            else:
+                print("\n读取温度失败")
 
         # OTA 命令
         elif args.command == 'ota-bt':

@@ -22,6 +22,7 @@ typedef enum {
     BLE_SRV_CMD_GET_CPU = 0x03,
     BLE_SRV_CMD_GET_FLASH = 0x04,
     BLE_SRV_CMD_RESTART = 0x05,
+    BLE_SRV_CMD_GET_TEMPERATURE = 0x06,
 } ble_srv_cmd_t;
 
 typedef struct __attribute__((packed)) {
@@ -31,6 +32,8 @@ typedef struct __attribute__((packed)) {
     char mac_address[18];
     char version[32];
     uint32_t cpu_freq_mhz;
+    float temperature_celsius;
+    uint8_t temp_sensor_supported;
 } ble_srv_device_info_t;
 
 typedef struct __attribute__((packed)) {

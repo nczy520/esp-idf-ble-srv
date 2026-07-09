@@ -1,5 +1,11 @@
 # ESP-IDF BLE Service
 
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
+[![Version](https://img.shields.io/badge/version-1.1.0-blueviolet)](https_ota/idf_component.yml)
+
+
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
 **版本**: 1.1.0 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x

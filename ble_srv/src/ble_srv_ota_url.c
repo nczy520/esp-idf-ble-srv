@@ -10,6 +10,7 @@
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
 #include "esp_app_format.h"
+#include "esp_crt_bundle.h"
 
 static const char *TAG = "BLE_SRV_OTA_URL";
 
@@ -89,6 +90,7 @@ static bool check_version_from_header(const char *fw_url)
     esp_http_client_config_t http_config = {
         .url = fw_url,
         .cert_pem = NULL,
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 10000,
         .keep_alive_enable = false,
         .skip_cert_common_name_check = true,
@@ -202,6 +204,7 @@ static void ble_srv_ota_url_task(void *arg)
     esp_http_client_config_t http_config = {
         .url = s_ota_url,
         .cert_pem = NULL,
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 15000,
         .keep_alive_enable = false,
         .skip_cert_common_name_check = true,

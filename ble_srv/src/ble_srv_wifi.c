@@ -16,9 +16,55 @@ static const char *TAG = "BLE_SRV_WIFI";
 #define BLE_WIFI_NVS_NAMESPACE "ble_wifi"
 #define BLE_WIFI_NVS_KEY_SSID  "ssid"
 #define BLE_WIFI_NVS_KEY_PASS  "pass"
+#define PROV_NVS_NAMESPACE     "wifi_prov"
+#define PROV_NVS_KEY_SSID      "ssid"
+#define PROV_NVS_KEY_PASS      "pass"
 
 static bool s_initialized = false;
 static wifi_prov_config_t s_prov_config;
+
+static bool save_to_prov_nvs(const char *ssid, const char *password)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(PROV_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open prov NVS: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    err = nvs_set_str(handle, PROV_NVS_KEY_SSID, ssid);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save SSID to prov NVS: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
+    }
+
+    err = nvs_set_str(handle, PROV_NVS_KEY_PASS, password);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save password to prov NVS: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit prov NVS: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    return true;
+}
+
+static void destroy_orphan_sta_netif(void)
+{
+    esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta_netif) {
+        ESP_LOGI(TAG, "Destroying orphan STA netif before wifi_prov_start");
+        esp_netif_destroy_default_wifi(sta_netif);
+    }
+}
 
 bool ble_srv_wifi_provisioner_init(void)
 {
@@ -47,6 +93,32 @@ bool ble_srv_wifi_provisioner_init(void)
 bool ble_srv_wifi_is_connected(void)
 {
     return wifi_prov_is_connected();
+}
+
+bool ble_srv_wifi_auto_connect(void)
+{
+    if (!s_initialized) {
+        ESP_LOGW(TAG, "WiFi provisioner not initialized");
+        return false;
+    }
+
+    if (wifi_prov_is_connected()) {
+        ESP_LOGI(TAG, "WiFi already connected");
+        return true;
+    }
+
+    ESP_LOGI(TAG, "Auto-connecting to saved WiFi...");
+
+    destroy_orphan_sta_netif();
+
+    esp_err_t err = wifi_prov_start(&s_prov_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi_prov_start failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    s_initialized = true;
+    return true;
 }
 
 void ble_srv_wifi_provisioner_deinit(void)
@@ -98,11 +170,19 @@ bool ble_srv_wifi_connect(const char *ssid, const char *password)
         return false;
     }
 
+    if (!save_to_prov_nvs(ssid, password)) {
+        ESP_LOGE(TAG, "Failed to save credentials to provisioner NVS");
+        return false;
+    }
+
     if (!s_initialized) {
         ble_srv_wifi_provisioner_init();
     }
 
     wifi_prov_stop();
+    s_initialized = false;
+
+    destroy_orphan_sta_netif();
 
     err = wifi_prov_start(&s_prov_config);
     if (err != ESP_OK) {
@@ -110,6 +190,7 @@ bool ble_srv_wifi_connect(const char *ssid, const char *password)
         return false;
     }
 
+    s_initialized = true;
     ESP_LOGI(TAG, "WiFi provisioner started with new credentials");
     return true;
 }
@@ -124,6 +205,7 @@ bool ble_srv_wifi_forget(void)
     ESP_LOGI(TAG, "Forgetting WiFi credentials");
 
     wifi_prov_stop();
+    s_initialized = false;
 
     esp_err_t err = wifi_prov_erase_credentials();
     if (err != ESP_OK) {

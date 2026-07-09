@@ -31,6 +31,10 @@ void app_main(void)
         return;
     }
 
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
+    ble_srv_wifi_auto_connect();
+#endif
+
     ESP_LOGI(TAG, "BLE Service Example started successfully");
 
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED

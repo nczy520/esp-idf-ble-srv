@@ -1,4 +1,5 @@
 #include "ble_srv_device.h"
+#include "ble_srv_temp_sensor.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
@@ -74,9 +75,25 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
 
     info->cpu_freq_mhz = (uint32_t)(esp_clk_cpu_freq() / 1000000);
 
-    ESP_LOGI(TAG, "Device: %s, Flash: %s, MAC: %s, Ver: %s, CPU: %luMHz",
+    // 读取温度传感器
+    info->temp_sensor_supported = ble_srv_temp_sensor_is_supported() ? 1 : 0;
+    if (info->temp_sensor_supported) {
+        float temp = 0.0f;
+        if (ble_srv_temp_sensor_read(&temp)) {
+            info->temperature_celsius = temp;
+            ESP_LOGI(TAG, "Temperature: %.2f°C", temp);
+        } else {
+            info->temperature_celsius = -999.0f; // 表示读取失败
+            ESP_LOGW(TAG, "Failed to read temperature");
+        }
+    } else {
+        info->temperature_celsius = -999.0f; // 表示不支持
+        ESP_LOGI(TAG, "Temperature sensor not supported");
+    }
+
+    ESP_LOGI(TAG, "Device: %s, Flash: %s, MAC: %s, Ver: %s, CPU: %luMHz, Temp: %.2f°C",
              info->chip_name, info->flash_size, info->mac_address,
-             info->version, (unsigned long)info->cpu_freq_mhz);
+             info->version, (unsigned long)info->cpu_freq_mhz, info->temperature_celsius);
 
     return true;
 }

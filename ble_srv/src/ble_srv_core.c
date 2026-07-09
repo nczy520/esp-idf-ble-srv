@@ -3,6 +3,7 @@
 #include "ble_srv_ota_common.h"
 #include "ble_srv_ota_bt.h"
 #include "ble_srv_led.h"
+#include "ble_srv_temp_sensor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -239,6 +240,9 @@ bool ble_srv_init(void)
     ble_srv_led_init();
 #endif
 
+    // 初始化温度传感器
+    ble_srv_temp_sensor_init();
+
     ESP_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);
     return true;
 }
@@ -252,6 +256,9 @@ void ble_srv_deinit(void)
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
     ble_srv_led_deinit();
 #endif
+
+    // 反初始化温度传感器
+    ble_srv_temp_sensor_deinit();
 
     nimble_port_stop();
     nimble_port_deinit();

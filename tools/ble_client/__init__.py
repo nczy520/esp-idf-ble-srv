@@ -1,19 +1,20 @@
 """
 BLE设备管理器完整客户端
-组合所有功能模块：设备信息、OTA、WiFi、LED
+组合所有功能模块：设备信息、OTA、WiFi、LED、温度传感器
 """
 
 from .client import BLEDeviceManagerClient
 from .ota import OTAMixin
 from .wifi import WiFiMixin
 from .led import LEDMixin
+from .temperature import TemperatureMixin
 from .models import (
     DeviceInfo, MemoryInfo, CPUInfo, FlashInfo, PartitionInfo, OTAStatus, WiFiStatus,
     OTAState, OTAError
 )
 
 
-class BLEDeviceClient(BLEDeviceManagerClient, OTAMixin, WiFiMixin, LEDMixin):
+class BLEDeviceClient(BLEDeviceManagerClient, OTAMixin, WiFiMixin, LEDMixin, TemperatureMixin):
     """
     完整的BLE设备客户端，集成所有功能
     """
@@ -28,6 +29,7 @@ __all__ = [
     'OTAMixin',
     'WiFiMixin',
     'LEDMixin',
+    'TemperatureMixin',
     'DeviceInfo',
     'MemoryInfo',
     'CPUInfo',

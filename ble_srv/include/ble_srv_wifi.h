@@ -30,6 +30,7 @@ typedef struct __attribute__((packed)) {
 
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED
 bool ble_srv_wifi_provisioner_init(void);
+bool ble_srv_wifi_auto_connect(void);
 bool ble_srv_wifi_is_connected(void);
 void ble_srv_wifi_provisioner_deinit(void);
 bool ble_srv_wifi_connect(const char *ssid, const char *password);

@@ -143,6 +143,30 @@ menu "BLE Service"
                 Default values per target: ESP32-S3=21, ESP32-C3/C6/H2=10, ESP32=2, ESP32-S2=18
     endmenu
 
+    menu "Temperature Sensor"
+        config BLE_SRV_TEMP_SENSOR_ENABLED
+            bool "Enable Temperature Sensor"
+            default y
+            help
+                Enable built-in temperature sensor reading.
+                Supported chips: ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C6, ESP32-H2, ESP32-P4.
+                ESP32 does not have built-in temperature sensor.
+
+        config BLE_SRV_TEMP_SENSOR_RANGE_MIN
+            int "Temperature Range Min (°C)"
+            default -10
+            depends on BLE_SRV_TEMP_SENSOR_ENABLED
+            help
+                Minimum temperature range for the sensor in Celsius.
+
+        config BLE_SRV_TEMP_SENSOR_RANGE_MAX
+            int "Temperature Range Max (°C)"
+            default 80
+            depends on BLE_SRV_TEMP_SENSOR_ENABLED
+            help
+                Maximum temperature range for the sensor in Celsius.
+    endmenu
+
     endif
 
 endmenu

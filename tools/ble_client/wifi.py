@@ -1,9 +1,15 @@
 """
 WiFi功能模块
 包含WiFi连接管理和状态查询
+
+WiFi配置数据格式（与固件端ble_wifi_config_t对应，packed）:
+  ssid[33]     - SSID字符串，固定33字节，不足补零
+  password[65] - 密码字符串，固定65字节，不足补零
+  总计: 98字节
 """
 
 import asyncio
+import struct
 
 try:
     from bleak import BleakError
@@ -16,12 +22,14 @@ from .constants import (
     BLE_WIFI_STATUS_CHAR_UUID,
     BLE_WIFI_CONFIG_CHAR_UUID,
     BLE_WIFI_CTRL_CHAR_UUID,
-    BLE_WIFI_CMD_CONNECT,
-    BLE_WIFI_CMD_DISCONNECT,
     BLE_WIFI_CTRL_FORGET,
     BLE_WIFI_CTRL_NTP_SYNC
 )
 from .models import WiFiStatus
+
+WIFI_SSID_LEN = 33
+WIFI_PASS_LEN = 65
+WIFI_CONFIG_SIZE = WIFI_SSID_LEN + WIFI_PASS_LEN  # 98
 
 
 class WiFiMixin:
@@ -32,10 +40,11 @@ class WiFiMixin:
             print("未连接设备")
             return False
         try:
-            ssid_bytes = ssid.encode('utf-8')
-            pass_bytes = password.encode('utf-8')
-            cmd_data = bytes([BLE_WIFI_CMD_CONNECT, len(ssid_bytes)]) + ssid_bytes + \
-                       bytes([len(pass_bytes)]) + pass_bytes
+            ssid_bytes = ssid.encode('utf-8')[:WIFI_SSID_LEN - 1]
+            pass_bytes = password.encode('utf-8')[:WIFI_PASS_LEN - 1]
+            ssid_padded = ssid_bytes.ljust(WIFI_SSID_LEN, b'\x00')
+            pass_padded = pass_bytes.ljust(WIFI_PASS_LEN, b'\x00')
+            cmd_data = ssid_padded + pass_padded
             await self.client.write_gatt_char(BLE_WIFI_CONFIG_CHAR_UUID, cmd_data)
             print(f"WiFi连接命令已发送 (SSID: {ssid})")
             return True
@@ -48,7 +57,9 @@ class WiFiMixin:
             print("未连接设备")
             return False
         try:
-            await self.client.write_gatt_char(BLE_WIFI_CONFIG_CHAR_UUID, bytes([BLE_WIFI_CMD_DISCONNECT]))
+            ssid_empty = b'\x00' * WIFI_SSID_LEN
+            pass_empty = b'\x00' * WIFI_PASS_LEN
+            await self.client.write_gatt_char(BLE_WIFI_CONFIG_CHAR_UUID, ssid_empty + pass_empty)
             print("WiFi断开命令已发送")
             return True
         except BleakError as e:
