@@ -4274,7 +4274,7 @@ CONFIG_BLE_SRV_OTA_BT_NOTIFY_INTERVAL=10
 # OTA URL
 #
 CONFIG_BLE_SRV_OTA_URL_ENABLED=y
-CONFIG_BLE_SRV_OTA_URL_DEFAULT="https://mdeve.com/2.bin"
+CONFIG_BLE_SRV_OTA_URL_DEFAULT="https://mdeve.com/upgrade/esp32/ble_srv_example.bin"
 # end of OTA URL
 
 #

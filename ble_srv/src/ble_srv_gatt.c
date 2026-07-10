@@ -124,7 +124,7 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             {
                 .uuid = &s_srv_restart_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &g_srv_restart_chr_val_handle,
             },
             { 0 },
@@ -375,7 +375,12 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 s_partition_index = s_write_buf[0];
             }
         } else if (attr_handle == g_srv_restart_chr_val_handle) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            uint8_t restart_response = 0x01;
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(&restart_response, sizeof(restart_response));
+            if (om) {
+                ble_gatts_notify_custom(conn_handle, g_srv_restart_chr_val_handle, om);
+            }
+            vTaskDelay(pdMS_TO_TICKS(500));
             esp_restart();
         }
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED

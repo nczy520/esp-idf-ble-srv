@@ -10,15 +10,17 @@ ESP32 BLE设备管理器客户端 - 命令行工具
   python client.py -c temperature -d 设备名
 
 功能模块:
-  - ble_client/constants.py    : UUID常量和命令码
-  - ble_client/models.py       : 数据结构类
-  - ble_client/client.py       : 核心BLE客户端基类
-  - ble_client/ota.py          : OTA功能混合类
-  - ble_client/wifi.py         : WiFi功能混合类
-  - ble_client/led.py          : LED功能混合类
-  - ble_client/temperature.py  : 温度传感器混合类
-  - ble_client/__init__.py     : 完整客户端组合类
+  - client/constants.py    : UUID常量和命令码
+  - client/models.py       : 数据结构类
+  - client/client.py       : 核心BLE客户端基类
+  - client/ota.py          : OTA功能混合类
+  - client/wifi.py         : WiFi功能混合类
+  - client/led.py          : LED功能混合类
+  - client/temperature.py  : 温度传感器混合类
+  - client/__init__.py     : 完整客户端组合类
 """
+
+__version__ = "1.2.1"
 
 import asyncio
 import argparse
@@ -28,7 +30,7 @@ import os
 # 添加脚本目录到路径，支持作为脚本直接运行
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ble_client import BLEDeviceClient
+from client import BLEDeviceClient
 
 
 async def main():

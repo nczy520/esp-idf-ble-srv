@@ -111,7 +111,7 @@ class PartitionInfo:
         return subtypes.get(self.subtype, f'unknown({self.subtype})')
 
     def __str__(self):
-        return f"标签: {self.label}\n地址: 0x{self.address:08X}\n大小: {self.size / 1024:.1f} KB\n类型: {self.get_type_name()}\n子类型: {self.get_subtype_name()}"
+        return f"{self.label:12} | 地址: 0x{self.address:08X} | 大小: {self.size / 1024:6.1f} KB | 类型: {self.get_type_name():8} | 子类型: {self.get_subtype_name()}"
 
 class OTAStatus:
     def __init__(self, data):
