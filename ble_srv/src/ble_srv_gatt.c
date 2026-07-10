@@ -324,21 +324,8 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             return BLE_ATT_ERR_UNLIKELY;
         }
 
-        if (attr_handle == g_srv_cmd_chr_val_handle) {
-            ble_srv_cmd_t cmd = (ble_srv_cmd_t)s_write_buf[0];
-            ESP_LOGI(TAG, "SRV command: 0x%02X", cmd);
-            switch (cmd) {
-            case BLE_SRV_CMD_RESTART:
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_restart();
-                break;
-            default:
-                break;
-            }
-        } else if (attr_handle == g_ota_bt_cmd_chr_val_handle) {
+        if (attr_handle == g_ota_bt_cmd_chr_val_handle) {
             ble_srv_ota_bt_dispatch_cmd(s_write_buf, data_len);
-        } else if (attr_handle == g_ota_bt_fw_data_chr_val_handle) {
-            ble_srv_ota_bt_process_fw_data(s_write_buf, data_len);
         }
 #ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
         else if (attr_handle == g_ota_url_chr_val_handle) {
@@ -370,6 +357,20 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             }
         }
 #endif
+        else if (attr_handle == g_srv_cmd_chr_val_handle) {
+            ble_srv_cmd_t cmd = (ble_srv_cmd_t)s_write_buf[0];
+            ESP_LOGI(TAG, "SRV command: 0x%02X", cmd);
+            switch (cmd) {
+            case BLE_SRV_CMD_RESTART:
+                vTaskDelay(pdMS_TO_TICKS(100));
+                esp_restart();
+                break;
+            default:
+                break;
+            }
+        } else if (attr_handle == g_ota_bt_fw_data_chr_val_handle) {
+            ble_srv_ota_bt_process_fw_data(s_write_buf, data_len);
+        }
         else if (attr_handle == g_srv_partition_chr_val_handle) {
             if (data_len > 0) {
                 s_partition_index = s_write_buf[0];

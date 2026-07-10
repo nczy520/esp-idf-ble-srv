@@ -2,6 +2,9 @@
 ESP32 BLE Device Manager - Flet GUI Client
 跨平台蓝牙BLE设备管理器图形界面客户端 (macOS / Windows)
 
+开发者: 赵宇
+联系邮箱: support@mdeve.com
+
 依赖: pip install flet bleak
 """
 
@@ -78,7 +81,7 @@ class BleDeviceManager:
         return fut
 
     def main(self, page: ft.Page):
-        page.title = f"BLE Device Manager v{self.version}"
+        page.title = f"BLE Device Manager v{self.version} | support@mdeve.com"
         page.window.width = 1280
         page.window.height = 800
         page.window.min_width = 1280

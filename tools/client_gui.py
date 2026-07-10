@@ -3,6 +3,9 @@
 ESP32 BLE Device Manager - Flet GUI Client
 跨平台蓝牙BLE设备管理器图形界面客户端 (macOS / Windows)
 
+开发者: 赵宇
+联系邮箱: support@mdeve.com
+
 依赖: pip install flet bleak
 
 用法:
@@ -40,12 +43,10 @@ def clear_pycache():
 
 
 def main():
-    # 解析命令行参数
     parser = argparse.ArgumentParser(description='BLE Device Manager')
     parser.add_argument('--debug', action='store_true', help='调试模式（自动清理 __pycache__）')
     args = parser.parse_args()
 
-    # 调试模式：清除 __pycache__
     if args.debug:
         print("=" * 50)
         print("调试模式已开启")
@@ -53,7 +54,6 @@ def main():
         clear_pycache()
         print("=" * 50)
 
-    # 启动应用
     from client_gui import main as app_main
     app_main(__version__)
 

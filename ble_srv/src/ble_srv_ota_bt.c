@@ -5,21 +5,18 @@
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/stream_buffer.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
-#include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "host/ble_hs.h"
 #include "host/ble_gatt.h"
 
 static const char *TAG = "BLE_SRV_OTA_BT";
 
-#define BLE_SRV_STREAM_BUF_SIZE     (128 * 1024)
-#define BLE_SRV_STREAM_TRIGGER      (8 * 1024)
-#define BLE_SRV_WRITER_TASK_STACK   12288
-#define BLE_SRV_WRITER_TASK_PRIO    5
+#define BLE_SRV_WRITE_BUF_SIZE      (64 * 1024)
+#define BLE_SRV_NOTIFY_BATCH        10
 
 static esp_ota_handle_t s_ota_handle = 0;
 static const esp_partition_t *s_target_partition = NULL;
@@ -30,17 +27,16 @@ static ble_ota_err_t s_ota_error = BLE_OTA_ERR_NONE;
 static SemaphoreHandle_t s_state_lock = NULL;
 static ble_srv_status_cb_t s_status_cb = NULL;
 
-static StreamBufferHandle_t s_fw_stream = NULL;
-static TaskHandle_t s_wr_task = NULL;
+static uint8_t *s_write_buf = NULL;
+static uint32_t s_write_buf_len = 0;
 static volatile bool s_wr_running = false;
 static volatile uint32_t s_total_received = 0;
-static uint32_t s_notify_counter = 0;
+static uint8_t s_packet_count = 0;
 
 extern uint16_t g_ota_status_chr_val_handle;
 extern bool g_ota_status_notify_enabled;
 extern uint16_t ble_srv_get_conn_handle(void);
 
-static void ble_srv_writer_task(void *arg);
 static bool ble_srv_process_ota_start(const uint8_t *data, uint16_t len);
 static bool ble_srv_process_ota_verify(void);
 static bool ble_srv_process_ota_apply(void);
@@ -78,7 +74,7 @@ bool ble_srv_ota_get_status(ble_ota_status_t *status)
         return false;
     }
 
-    uint32_t report = (s_fw_bytes_written > 0) ? s_fw_bytes_written : s_total_received;
+    uint32_t report = s_total_received;
     status->state = s_ota_state;
     status->error_code = s_ota_error;
     status->fw_size = s_fw_total_size;
@@ -93,14 +89,16 @@ void ble_srv_ota_push_status(void)
     uint16_t conn_handle = ble_srv_get_conn_handle();
 
     if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        ESP_LOGW(TAG, "push_status: no connection");
         return;
     }
 
     if (!g_ota_status_notify_enabled) {
+        ESP_LOGW(TAG, "push_status: notify not enabled");
         return;
     }
 
-    uint32_t report = s_fw_bytes_written;
+    uint32_t report = s_total_received;
 
     ble_ota_status_t status = {
         .state          = s_ota_state,
@@ -117,7 +115,7 @@ void ble_srv_ota_push_status(void)
 
     int rc = ble_gatts_notify_custom(conn_handle, g_ota_status_chr_val_handle, om);
     if (rc != 0) {
-        ESP_LOGD(TAG, "push_status: notify failed: rc=%d", rc);
+        ESP_LOGE(TAG, "push_status: notify failed: rc=%d", rc);
     }
 
     if (s_status_cb) {
@@ -143,19 +141,11 @@ bool ble_srv_ota_bt_init(void)
         return false;
     }
 
-    StaticStreamBuffer_t *stream_buf = heap_caps_malloc(sizeof(StaticStreamBuffer_t), MALLOC_CAP_SPIRAM);
-    uint8_t *stream_storage = heap_caps_malloc(BLE_SRV_STREAM_BUF_SIZE, MALLOC_CAP_SPIRAM);
-    if (!stream_buf || !stream_storage) {
-        ESP_LOGE(TAG, "Failed to allocate stream buffer from PSRAM");
-        free(stream_buf);
-        free(stream_storage);
-        return false;
-    }
-
-    s_fw_stream = xStreamBufferCreateStatic(BLE_SRV_STREAM_BUF_SIZE, BLE_SRV_STREAM_TRIGGER,
-                                             stream_storage, stream_buf);
-    if (!s_fw_stream) {
-        ESP_LOGE(TAG, "Failed to create stream buffer");
+    s_write_buf = heap_caps_malloc(BLE_SRV_WRITE_BUF_SIZE, MALLOC_CAP_SPIRAM);
+    if (!s_write_buf) {
+        ESP_LOGE(TAG, "Failed to allocate write buffer from PSRAM");
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
         return false;
     }
 
@@ -171,9 +161,9 @@ void ble_srv_ota_bt_deinit(void)
         s_state_lock = NULL;
     }
 
-    if (s_fw_stream) {
-        vStreamBufferDelete(s_fw_stream);
-        s_fw_stream = NULL;
+    if (s_write_buf) {
+        free(s_write_buf);
+        s_write_buf = NULL;
     }
 
     g_ota_status_notify_enabled = false;
@@ -182,30 +172,12 @@ void ble_srv_ota_bt_deinit(void)
 void ble_srv_ota_bt_reset(void)
 {
     s_wr_running = false;
-
-    if (s_wr_task) {
-        for (int i = 0; i < 20; i++) {
-            eTaskState ts = eTaskGetState(s_wr_task);
-            if (ts == eDeleted || ts == eInvalid) {
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        eTaskState ts = eTaskGetState(s_wr_task);
-        if (ts != eDeleted && ts != eInvalid) {
-            ESP_LOGW(TAG, "Writer task still running, forcing delete");
-            vTaskDelete(s_wr_task);
-        }
-        s_wr_task = NULL;
-    }
+    s_write_buf_len = 0;
+    s_packet_count = 0;
 
     if (s_ota_handle != 0) {
         esp_ota_abort(s_ota_handle);
         s_ota_handle = 0;
-    }
-
-    if (s_fw_stream) {
-        xStreamBufferReset(s_fw_stream);
     }
 
     s_fw_total_size = 0;
@@ -251,30 +223,14 @@ static bool ble_srv_process_ota_start(const uint8_t *data, uint16_t len)
              (unsigned long)s_target_partition->size);
 
     s_wr_running = false;
-    if (s_wr_task) {
-        for (int i = 0; i < 100; i++) {
-            eTaskState ts = eTaskGetState(s_wr_task);
-            if (ts == eDeleted || ts == eInvalid) {
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        eTaskState ts = eTaskGetState(s_wr_task);
-        if (ts != eDeleted && ts != eInvalid) {
-            ESP_LOGW(TAG, "Old writer task still running, forcing delete");
-            vTaskDelete(s_wr_task);
-        }
-        s_wr_task = NULL;
-    }
 
     if (s_ota_handle != 0) {
         esp_ota_abort(s_ota_handle);
         s_ota_handle = 0;
     }
 
-    if (s_fw_stream) {
-        xStreamBufferReset(s_fw_stream);
-    }
+    s_write_buf_len = 0;
+    s_packet_count = 0;
 
     esp_err_t ret = esp_ota_begin(s_target_partition, s_fw_total_size, &s_ota_handle);
     if (ret != ESP_OK) {
@@ -285,142 +241,22 @@ static bool ble_srv_process_ota_start(const uint8_t *data, uint16_t len)
 
     s_fw_bytes_written = 0;
     s_total_received = 0;
-    s_notify_counter = 0;
 
     s_wr_running = true;
-    BaseType_t ok = xTaskCreate(ble_srv_writer_task, "ota_wr",
-                                BLE_SRV_WRITER_TASK_STACK, NULL,
-                                BLE_SRV_WRITER_TASK_PRIO, &s_wr_task);
-    if (ok != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create writer task");
-        s_wr_running = false;
-        esp_ota_abort(s_ota_handle);
-        s_ota_handle = 0;
-        ble_srv_ota_set_state(BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
-        return false;
-    }
 
+    g_ota_status_notify_enabled = true;
     ble_srv_ota_set_state(BLE_OTA_STATE_RECEIVING, BLE_OTA_ERR_NONE);
     ESP_LOGI(TAG, "OTA session started successfully");
     return true;
 }
 
-static void ble_srv_writer_task(void *arg)
-{
-    ESP_LOGI(TAG, "OTA writer task started, fw_size=%lu bytes",
-             (unsigned long)s_fw_total_size);
-
-    uint8_t *write_buf = heap_caps_malloc(BLE_SRV_STREAM_TRIGGER, MALLOC_CAP_SPIRAM);
-    if (!write_buf) {
-        ESP_LOGE(TAG, "Failed to allocate write buffer from PSRAM");
-        ble_srv_ota_set_state(BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
-        s_wr_running = false;
-        vTaskDelete(NULL);
-        return;
-    }
-
-    uint8_t last_logged_pct = 0;
-    uint32_t last_logged_bytes = 0;
-    int64_t last_log_time = esp_timer_get_time();
-
-    while (s_wr_running) {
-        size_t recv_len = xStreamBufferReceive(s_fw_stream, write_buf,
-                                                sizeof(write_buf),
-                                                pdMS_TO_TICKS(50));
-        if (recv_len == 0) {
-            continue;
-        }
-
-        esp_err_t ret = esp_ota_write(s_ota_handle, write_buf, recv_len);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "OTA write fail @%lu len=%u: %s",
-                     (unsigned long)s_fw_bytes_written, (unsigned int)recv_len,
-                     esp_err_to_name(ret));
-            ble_srv_ota_set_state(BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
-            s_wr_running = false;
-            vTaskDelete(NULL);
-            return;
-        }
-
-        s_fw_bytes_written += recv_len;
-
-        int64_t now = esp_timer_get_time();
-        int64_t log_elapsed = now - last_log_time;
-
-        uint32_t written = s_fw_bytes_written;
-        uint8_t pct = (s_fw_total_size > 0) ? (uint8_t)((written * 100) / s_fw_total_size) : 0;
-
-        bool should_notify = false;
-        bool should_log = false;
-
-        if (pct != last_logged_pct) {
-            should_notify = true;
-            should_log = true;
-        } else if (log_elapsed >= 3000000 && written != last_logged_bytes) {
-            should_notify = true;
-            should_log = true;
-        }
-
-        if (should_notify) {
-            ble_srv_ota_push_status();
-        }
-
-        if (should_log) {
-            int64_t total_elapsed = now;
-            if (total_elapsed > 0 && written > 0) {
-                float speed = (float)written * 1000000.0f / (float)total_elapsed;
-                uint32_t remaining = s_fw_total_size - written;
-                int eta = (speed > 0.0f) ? (int)((float)remaining / speed) : 0;
-
-                if (speed >= 1024.0f) {
-                    ESP_LOGI(TAG, "OTA: %3d%% | %lu/%lu KB | %.1f KB/s | ETA: %ds",
-                             pct,
-                             (unsigned long)(written / 1024),
-                             (unsigned long)(s_fw_total_size / 1024),
-                             speed / 1024.0f,
-                             eta);
-                } else {
-                    ESP_LOGI(TAG, "OTA: %3d%% | %lu/%lu KB | %.1f B/s | ETA: %ds",
-                             pct,
-                             (unsigned long)(written / 1024),
-                             (unsigned long)(s_fw_total_size / 1024),
-                             speed,
-                             eta);
-                }
-            }
-            last_logged_pct = pct;
-            last_logged_bytes = written;
-            last_log_time = now;
-        }
-    }
-
-    ESP_LOGI(TAG, "Writer task draining remaining data...");
-    size_t drain_len;
-    while ((drain_len = xStreamBufferReceive(s_fw_stream, write_buf,
-                                              sizeof(write_buf),
-                                              pdMS_TO_TICKS(100))) > 0) {
-        esp_err_t ret = esp_ota_write(s_ota_handle, write_buf, drain_len);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "OTA flush fail @%lu: %s",
-                     (unsigned long)s_fw_bytes_written, esp_err_to_name(ret));
-            ble_srv_ota_set_state(BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
-            break;
-        }
-        s_fw_bytes_written += drain_len;
-    }
-    ble_srv_ota_push_status();
-
-    ESP_LOGI(TAG, "OTA writer task finished, written=%lu/%lu bytes (%d%%)",
-             (unsigned long)s_fw_bytes_written, (unsigned long)s_fw_total_size,
-             s_fw_total_size > 0 ? (int)(s_fw_bytes_written * 100 / s_fw_total_size) : 0);
-    free(write_buf);
-    vTaskDelete(NULL);
-}
-
 bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
 {
+    if (!s_wr_running) {
+        return false;
+    }
+
     if (s_ota_state != BLE_OTA_STATE_RECEIVING) {
-        ESP_LOGW(TAG, "FW data ignored, state=%d", s_ota_state);
         return false;
     }
 
@@ -437,19 +273,65 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
         return false;
     }
 
-    size_t space = xStreamBufferSpacesAvailable(s_fw_stream);
-    if (space < len) {
-        return false;
+    if (s_write_buf_len + len > BLE_SRV_WRITE_BUF_SIZE) {
+        if (s_write_buf_len > 0 && s_wr_running) {
+            esp_err_t ret = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "OTA write fail @%lu len=%lu: %s",
+                         (unsigned long)s_fw_bytes_written, (unsigned long)s_write_buf_len,
+                         esp_err_to_name(ret));
+                ble_srv_ota_set_state(BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
+                s_wr_running = false;
+                return false;
+            }
+            s_fw_bytes_written += s_write_buf_len;
+            s_write_buf_len = 0;
+
+            uint8_t pct = (s_fw_total_size > 0) ? (uint8_t)((s_fw_bytes_written * 100) / s_fw_total_size) : 0;
+            ESP_LOGI(TAG, "OTA: %3d%% | %lu/%lu KB",
+                     pct,
+                     (unsigned long)(s_fw_bytes_written / 1024),
+                     (unsigned long)(s_fw_total_size / 1024));
+        }
     }
 
-    size_t sent = xStreamBufferSend(s_fw_stream, data, len, 0);
-    if (sent != len) {
-        ESP_LOGW(TAG, "Stream buffer full! sent=%u, wanted=%u, free=%u",
-                 (unsigned int)sent, (unsigned int)len, (unsigned int)space);
-        return false;
-    }
-
+    memcpy(s_write_buf + s_write_buf_len, data, len);
+    s_write_buf_len += len;
     s_total_received += len;
+
+    if (s_write_buf_len >= BLE_SRV_WRITE_BUF_SIZE) {
+        if (!s_wr_running) {
+            return false;
+        }
+
+        esp_err_t ret = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "OTA write fail @%lu len=%lu: %s",
+                     (unsigned long)s_fw_bytes_written, (unsigned long)s_write_buf_len,
+                     esp_err_to_name(ret));
+            ble_srv_ota_set_state(BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
+            s_wr_running = false;
+            return false;
+        }
+
+        s_fw_bytes_written += s_write_buf_len;
+        s_write_buf_len = 0;
+
+        uint8_t pct = (s_fw_total_size > 0) ? (uint8_t)((s_fw_bytes_written * 100) / s_fw_total_size) : 0;
+        ESP_LOGI(TAG, "OTA: %3d%% | %lu/%lu KB",
+                 pct,
+                 (unsigned long)(s_fw_bytes_written / 1024),
+                 (unsigned long)(s_fw_total_size / 1024));
+    }
+
+    s_packet_count++;
+    if (s_packet_count >= BLE_SRV_NOTIFY_BATCH) {
+        s_packet_count = 0;
+        ESP_LOGI(TAG, "Sending OTA status notify, received=%lu, written=%lu",
+                 (unsigned long)s_total_received, (unsigned long)s_fw_bytes_written);
+        ble_srv_ota_push_status();
+    }
+
     return true;
 }
 
@@ -464,15 +346,19 @@ static bool ble_srv_process_ota_verify(void)
     }
 
     s_wr_running = false;
-    vTaskDelay(pdMS_TO_TICKS(150));
 
-    if (s_wr_task) {
-        eTaskState ts = eTaskGetState(s_wr_task);
-        if (ts != eDeleted && ts != eInvalid) {
-            ESP_LOGW(TAG, "Writer task still running, forcing delete");
-            vTaskDelete(s_wr_task);
+    if (s_write_buf_len > 0) {
+        esp_err_t ret = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "OTA flush fail @%lu len=%lu: %s",
+                     (unsigned long)s_fw_bytes_written, (unsigned long)s_write_buf_len,
+                     esp_err_to_name(ret));
+            ble_srv_ota_set_state(BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
+            s_write_buf_len = 0;
+            return false;
         }
-        s_wr_task = NULL;
+        s_fw_bytes_written += s_write_buf_len;
+        s_write_buf_len = 0;
     }
 
     ESP_LOGI(TAG, "All data flushed, fw_bytes_written=%lu, total_received=%lu",

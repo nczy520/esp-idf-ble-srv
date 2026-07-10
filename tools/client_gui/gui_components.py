@@ -77,6 +77,8 @@ class GuiComponents:
         self.ota_progress = ota_tab_comp.ota_progress
         self.ota_status_text = ota_tab_comp.ota_status_text
         self.ota_bt_btn = ota_tab_comp.ota_bt_btn
+        self.ota_url_btn = ota_tab_comp.ota_url_btn
+        self.ota_default_btn = ota_tab_comp.ota_default_btn
         self.ota_abort_btn = ota_tab_comp.ota_abort_btn
         self.ota_overlay = ota_tab_comp.ota_overlay
 

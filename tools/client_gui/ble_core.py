@@ -82,6 +82,7 @@ class BleCore:
         self._ota_fw_size = 0
         self._ota_start_time = 0
         self._ota_page = None
+        self._ota_ack_event = None
 
     def set_log_callback(self, callback):
         """设置日志回调函数"""
@@ -156,7 +157,7 @@ class BleCore:
         self.device_name = name
         self._log(f"正在连接 {name} [{address}]...", "info")
         try:
-            self.ble_client = BleakClient(address, disconnected_callback=self._on_disconnect)
+            self.ble_client = BleakClient(address, disconnected_callback=self._on_disconnect, use_cached=False)
             await self.ble_client.connect()
             self._is_connected = True
             mtu = self.ble_client.mtu_size if hasattr(self.ble_client, "mtu_size") else 247
@@ -501,74 +502,73 @@ class BleCore:
         self._ota_progress_callback = progress_cb
         self._ota_fw_size = fw_size
         self._ota_start_time = time.time()
+        self._ota_ack_event = asyncio.Event()
         self._log(f"开始OTA: 文件={os.path.basename(fw_path)}, 大小={fw_size}, MTU={mtu}, 块大小={chunk_size}", "info")
         if not await self.ota_start(fw_size, fw_crc, chunk_size, fw_version):
             self._ota_progress_callback = None
+            self._ota_ack_event = None
             return False, "OTA启动失败"
         try:
             start_time = time.time()
             offset = 0
-            sent_bytes = 0
             failures = 0
-            max_inflight = 16 * 1024
+            batch_count = 0
             while offset < fw_size:
-                if self.ota_status and self.ota_status.bytes_written > 0:
-                    if sent_bytes - self.ota_status.bytes_written > max_inflight:
-                        await asyncio.sleep(0.01)
-                        continue
                 chunk = fw_data[offset:offset + chunk_size]
+                if batch_count == 9:
+                    self._ota_ack_event.clear()
                 ok = await self.ota_send_fw_data(chunk)
                 if ok:
-                    sent_bytes += len(chunk)
                     offset += len(chunk)
+                    batch_count += 1
                     failures = 0
+                    if batch_count >= 10:
+                        batch_count = 0
+                        try:
+                            await asyncio.wait_for(self._ota_ack_event.wait(), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            pass
                 else:
                     failures += 1
                     if failures >= 10:
                         if not self.connected:
+                            self._ota_ack_event = None
                             return False, "连接已断开"
                         failures = 0
                     await asyncio.sleep(0.05)
-            elapsed = time.time() - start_time
-            speed = fw_size / elapsed if elapsed > 0 else 1.5
-            remain = fw_size - (self.ota_status.bytes_written if self.ota_status else 0)
-            expect = remain / speed if speed > 0 else 60
-            timeout = max(120, int(expect * 2))
-            self._log(f"固件发送完成，等待设备写入... 预计{expect:.1f}秒", "info")
-            for i in range(timeout):
-                await asyncio.sleep(1)
-                if self.ota_status:
-                    if self.ota_status.bytes_written >= fw_size:
-                        self._log("设备写入完成", "success")
-                        break
-            else:
-                await self.ota_abort()
-                self._ota_progress_callback = None
-                return False, "设备写入超时"
+            self._log(f"固件发送完成，开始校验...", "info")
             if not await self.ota_verify():
                 await self.ota_abort()
                 self._ota_progress_callback = None
+                self._ota_ack_event = None
                 return False, "OTA校验失败"
             await self.ota_apply()
             self._ota_progress_callback = None
+            self._ota_ack_event = None
             return True, "OTA升级成功"
         except (BleakError, OSError) as e:
             msg = str(e).lower()
             if any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset", "not found", "abort"]):
                 self._ota_progress_callback = None
+                self._ota_ack_event = None
                 return True, "设备已断开（OTA可能已完成）"
             await self.ota_abort()
             self._ota_progress_callback = None
+            self._ota_ack_event = None
             return False, str(e)
         except Exception as e:
             await self.ota_abort()
             self._ota_progress_callback = None
+            self._ota_ack_event = None
             return False, str(e)
 
     def _ota_status_handler(self, sender, data):
         """OTA状态通知处理"""
         try:
             self.ota_status = OTAStatus(data)
+            self._log(f"OTA通知: state={self.ota_status.state}, written={self.ota_status.bytes_written}, progress={self.ota_status.progress}%", "rx")
+            if self._ota_ack_event:
+                self._ota_ack_event.set()
             if self._ota_progress_callback and self.ota_status.bytes_written > 0 and self._ota_fw_size > 0:
                 written = self.ota_status.bytes_written
                 total = self._ota_fw_size

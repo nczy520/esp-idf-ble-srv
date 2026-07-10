@@ -17,10 +17,13 @@ class ConnectionHandler(BaseHandler):
         self.devices = []
         self.scan_lock = False
         self._device_rssi_controls = {}
+        self._device_connect_btns = {}
 
     def update_connection_ui(self, connected):
         """更新连接状态UI"""
         device = getattr(self.ble, 'selected_device_info', None)
+        connected_address = device.get('address') if device else None
+        
         if connected:
             self.ui.status_badge.content = ft.Row([
                 ft.Icon(ft.Icons.CIRCLE, size=10, color=ft.Colors.GREEN),
@@ -45,6 +48,24 @@ class ConnectionHandler(BaseHandler):
             self.ui.connect_toggle_btn.bgcolor = ft.Colors.BLUE
             self.ui.connect_toggle_btn.disabled = (device is None)
             self._set_overlays_visible(True)
+        
+        for addr, btn in self._device_connect_btns.items():
+            if connected and addr == connected_address:
+                btn.icon = ft.Icons.LINK_OFF_ROUNDED
+                btn.icon_color = ft.Colors.RED
+                btn.tooltip = "断开连接"
+                btn.disabled = False
+            elif connected:
+                btn.icon = ft.Icons.LINK_ROUNDED
+                btn.icon_color = ft.Colors.GREY
+                btn.tooltip = "请先断开当前设备"
+                btn.disabled = True
+            else:
+                btn.icon = ft.Icons.LINK_ROUNDED
+                btn.icon_color = ft.Colors.GREEN
+                btn.tooltip = "连接此设备"
+                btn.disabled = False
+        
         self.page.update()
 
     def _get_rssi_color(self, rssi):
@@ -92,6 +113,17 @@ class ConnectionHandler(BaseHandler):
             'text': rssi_text_ctrl
         }
         
+        connect_btn = ft.IconButton(
+            ft.Icons.LINK_ROUNDED,
+            icon_color=ft.Colors.GREEN,
+            tooltip="连接此设备",
+            icon_size=18,
+            on_click=self._on_connect_device_click,
+            data=index,
+        )
+        
+        self._device_connect_btns[device['address']] = connect_btn
+        
         self.ui.device_list.controls.append(
             ft.ListTile(
                 leading=ft.Icon(ft.Icons.BLUETOOTH, color=ft.Colors.BLUE, size=20),
@@ -105,14 +137,7 @@ class ConnectionHandler(BaseHandler):
                         ], spacing=4),
                     ], spacing=0, expand=True),
                     ft.Container(width=8),
-                    ft.IconButton(
-                        ft.Icons.LINK_ROUNDED,
-                        icon_color=ft.Colors.GREEN,
-                        tooltip="连接此设备",
-                        icon_size=18,
-                        on_click=self._on_connect_device_click,
-                        data=index,
-                    ),
+                    connect_btn,
                 ], spacing=0, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 on_click=self.handle_device_click,
                 data=index,
@@ -138,6 +163,7 @@ class ConnectionHandler(BaseHandler):
         self.devices = []
         self.ui.device_list.controls.clear()
         self._device_rssi_controls.clear()
+        self._device_connect_btns.clear()
         self.page.update()
 
         def on_device_found(device_info):
@@ -169,18 +195,24 @@ class ConnectionHandler(BaseHandler):
         )
 
     def _on_connect_device_click(self, event):
-        """点击连接图标连接设备"""
+        """点击连接/断开图标"""
         idx = event.control.data
         if idx < len(self.devices):
             device = self.devices[idx]
-            self.ble.selected_device_info = device
-            self.ui.status_text.value = f"{device['name']} | {device['address']}"
-            self.ui.status_text.color = ft.Colors.ON_SURFACE
-            self.ui.connect_toggle_btn.disabled = False
-            self.log(f"已选择: {device['name']}", "info")
-            self.page.update()
-            # 自动连接设备
-            self.handle_connect()
+            device_address = device.get('address')
+            current_device = getattr(self.ble, 'selected_device_info', None)
+            current_address = current_device.get('address') if current_device else None
+            
+            if self.ble.connected and device_address == current_address:
+                self.handle_disconnect()
+            else:
+                self.ble.selected_device_info = device
+                self.ui.status_text.value = f"{device['name']} | {device['address']}"
+                self.ui.status_text.color = ft.Colors.ON_SURFACE
+                self.ui.connect_toggle_btn.disabled = False
+                self.log(f"已选择: {device['name']}", "info")
+                self.page.update()
+                self.handle_connect()
 
     def handle_device_click(self, event):
         """选择设备"""

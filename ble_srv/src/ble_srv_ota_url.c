@@ -28,13 +28,28 @@ static bool parse_version_string(const char *ver_str, uint8_t *major, uint8_t *m
         return false;
     }
     int m = 0, n = 0, p = 0;
-    if (sscanf(ver_str, "%d.%d.%d", &m, &n, &p) != 3) {
-        return false;
+    int count = sscanf(ver_str, "%d.%d.%d", &m, &n, &p);
+    if (count == 3) {
+        *major = (uint8_t)m;
+        *minor = (uint8_t)n;
+        *patch = (uint8_t)p;
+        return true;
     }
-    *major = (uint8_t)m;
-    *minor = (uint8_t)n;
-    *patch = (uint8_t)p;
-    return true;
+    count = sscanf(ver_str, "%d.%d", &m, &n);
+    if (count == 2) {
+        *major = (uint8_t)m;
+        *minor = (uint8_t)n;
+        *patch = 0;
+        return true;
+    }
+    count = sscanf(ver_str, "%d", &m);
+    if (count == 1) {
+        *major = (uint8_t)m;
+        *minor = 0;
+        *patch = 0;
+        return true;
+    }
+    return false;
 }
 
 static bool get_current_version(uint8_t *major, uint8_t *minor, uint8_t *patch)
@@ -87,13 +102,20 @@ static bool check_version_from_header(const char *fw_url)
     }
     ESP_LOGI(TAG, "Current version: %d.%d.%d", cur_major, cur_minor, cur_patch);
 
+    if (!s_url_running) {
+        ESP_LOGW(TAG, "URL OTA aborted during version check");
+        return false;
+    }
+
     esp_http_client_config_t http_config = {
         .url = fw_url,
         .cert_pem = NULL,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 10000,
         .keep_alive_enable = false,
+#ifdef CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK
         .skip_cert_common_name_check = true,
+#endif
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&http_config);
@@ -111,6 +133,13 @@ static bool check_version_from_header(const char *fw_url)
         return true;
     }
 
+    if (!s_url_running) {
+        ESP_LOGW(TAG, "URL OTA aborted during HTTP open");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
     int content_length = esp_http_client_fetch_headers(client);
     int status_code = esp_http_client_get_status_code(client);
     ESP_LOGI(TAG, "Version check HTTP %d, content_length=%d", status_code, content_length);
@@ -120,6 +149,13 @@ static bool check_version_from_header(const char *fw_url)
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return true;
+    }
+
+    if (!s_url_running) {
+        ESP_LOGW(TAG, "URL OTA aborted during header fetch");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
     }
 
     uint8_t *header_buf = malloc(FW_HEADER_BUF_SIZE);
@@ -132,6 +168,13 @@ static bool check_version_from_header(const char *fw_url)
 
     int total_read = 0;
     while (total_read < FW_HEADER_BUF_SIZE) {
+        if (!s_url_running) {
+            ESP_LOGW(TAG, "URL OTA aborted during header read");
+            free(header_buf);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return false;
+        }
         int read_len = esp_http_client_read(client, (char *)(header_buf + total_read),
                                              FW_HEADER_BUF_SIZE - total_read);
         if (read_len <= 0) {
@@ -185,6 +228,8 @@ static void ble_srv_ota_url_task(void *arg)
 {
     ESP_LOGI(TAG, "URL OTA task started, URL: %s", s_ota_url);
 
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     ble_srv_ota_set_state(BLE_OTA_STATE_CHECKING, BLE_OTA_ERR_NONE);
 
     bool need_update = check_version_from_header(s_ota_url);
@@ -192,6 +237,8 @@ static void ble_srv_ota_url_task(void *arg)
     if (!need_update) {
         ble_srv_ota_set_state(BLE_OTA_STATE_CHECK_FAIL, BLE_OTA_ERR_NONE);
         ESP_LOGI(TAG, "No update needed, firmware is up to date");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        ble_srv_ota_set_state(BLE_OTA_STATE_IDLE, BLE_OTA_ERR_NONE);
         s_url_running = false;
         s_url_task = NULL;
         vTaskDelete(NULL);
@@ -207,13 +254,17 @@ static void ble_srv_ota_url_task(void *arg)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 15000,
         .keep_alive_enable = false,
+#ifdef CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK
         .skip_cert_common_name_check = true,
+#endif
     };
 
     esp_https_ota_config_t ota_config = {
         .http_config = &http_config,
     };
 
+    extern bool g_ota_status_notify_enabled;
+    g_ota_status_notify_enabled = true;
     ble_srv_ota_set_state(BLE_OTA_STATE_RECEIVING, BLE_OTA_ERR_NONE);
 
     esp_https_ota_handle_t https_ota_handle = NULL;
@@ -375,25 +426,9 @@ void ble_srv_ota_url_abort(void)
     }
 
     s_url_running = false;
-
-    if (s_url_task) {
-        for (int i = 0; i < 30; i++) {
-            eTaskState ts = eTaskGetState(s_url_task);
-            if (ts == eDeleted || ts == eInvalid) {
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        eTaskState ts = eTaskGetState(s_url_task);
-        if (ts != eDeleted && ts != eInvalid) {
-            ESP_LOGW(TAG, "URL OTA task still running, forcing delete");
-            vTaskDelete(s_url_task);
-        }
-        s_url_task = NULL;
-    }
+    ESP_LOGW(TAG, "URL OTA aborted by user");
 
     ble_srv_ota_set_state(BLE_OTA_STATE_IDLE, BLE_OTA_ERR_NONE);
-    ESP_LOGI(TAG, "URL OTA aborted");
 }
 
 bool ble_srv_ota_url_is_running(void)

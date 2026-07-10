@@ -35,9 +35,15 @@ from .models import OTAStatus, OTAState, OTAError
 class OTAMixin:
     """OTA功能混合类，需与BLEDeviceManagerClient一起使用"""
 
+    def __init__(self):
+        self.ota_status = None
+        self._ota_ack_event = None
+
     def _ota_status_handler(self, sender, data):
         try:
             self.ota_status = OTAStatus(data)
+            if self._ota_ack_event:
+                self._ota_ack_event.set()
         except Exception as e:
             print(f"解析OTA状态失败: {e}")
 
@@ -237,6 +243,7 @@ class OTAMixin:
         print(f"MTU: {self.client.mtu_size if self.client else 'N/A'}, chunk_size: {chunk_size}")
 
         if not await self.ota_start(fw_size, fw_crc, chunk_size, fw_version):
+            self._ota_ack_event = None
             return False
 
         try:
@@ -245,30 +252,28 @@ class OTAMixin:
 
             print(f"开始传输，共 {total_packages} 包...")
             offset = 0
-            sent_bytes = 0
             last_progress_pct = -1
             consecutive_failures = 0
-            max_in_flight = 64 * 1024
+            batch_count = 0
+
+            self._ota_ack_event = asyncio.Event()
 
             while offset < fw_size:
-                if self.ota_status and self.ota_status.bytes_written > 0:
-                    in_flight = sent_bytes - self.ota_status.bytes_written
-                    if in_flight > max_in_flight:
-                        pct = int(self.ota_status.bytes_written * 100 / fw_size)
-                        if pct != last_progress_pct:
-                            self._print_progress(self.ota_status.bytes_written, fw_size,
-                                                 start_time, label="写入", sent_bytes=sent_bytes)
-                            last_progress_pct = pct
-                        await asyncio.sleep(0.005)
-                        continue
-
                 chunk = fw_data[offset:offset + chunk_size]
+                if batch_count == 9:
+                    self._ota_ack_event.clear()
                 try:
                     success = await self.ota_send_fw_data(chunk)
                     if success:
-                        sent_bytes += len(chunk)
                         offset += len(chunk)
+                        batch_count += 1
                         consecutive_failures = 0
+                        if batch_count >= 10:
+                            batch_count = 0
+                            try:
+                                await asyncio.wait_for(self._ota_ack_event.wait(), timeout=5.0)
+                            except asyncio.TimeoutError:
+                                pass
                     else:
                         consecutive_failures += 1
                         if consecutive_failures >= 10:
@@ -289,55 +294,33 @@ class OTAMixin:
                     pct = int(self.ota_status.bytes_written * 100 / fw_size)
                     if pct != last_progress_pct:
                         self._print_progress(self.ota_status.bytes_written, fw_size,
-                                             start_time, label="写入", sent_bytes=sent_bytes)
-                        last_progress_pct = pct
-
-            print()
-            print(f"数据已发送，等待设备写入完成...")
-
-            # 根据传输速度动态计算超时时间，最少120秒
-            elapsed = time.time() - start_time
-            avg_speed = fw_size / elapsed if elapsed > 0 else 1.5
-            expected_time = (fw_size - self.ota_status.bytes_written) / avg_speed if avg_speed > 0 else 60
-            timeout = max(120, int(expected_time * 2))  # 至少120秒，或预期时间的2倍
-            print(f"预计等待时间: {expected_time:.1f}s, 超时时间: {timeout}s")
-
-            for i in range(timeout):
-                await asyncio.sleep(1)
-                if self.ota_status:
-                    if self.ota_status.bytes_written >= fw_size:
-                        self._print_progress(fw_size, fw_size, start_time, label="写入")
-                        last_progress_pct = 100
-                        break
-                    pct = int(self.ota_status.bytes_written * 100 / fw_size)
-                    if pct != last_progress_pct:
-                        self._print_progress(self.ota_status.bytes_written, fw_size,
                                              start_time, label="写入")
                         last_progress_pct = pct
-            else:
-                print("\n设备写入超时")
-                await self.ota_abort()
-                return False
 
             print()
-            print(f"OTA完成，共 {fw_size} 字节，耗时 {time.time() - start_time:.1f}s")
+            print(f"数据已发送，开始校验...")
 
             if not await self.ota_verify():
                 await self.ota_abort()
+                self._ota_ack_event = None
                 return False
 
             await self.ota_apply()
+            self._ota_ack_event = None
             return True
 
         except (BleakError, OSError) as e:
             err_msg = str(e).lower()
             if any(kw in err_msg for kw in ["disconnect", "disconnected", "unreachable", "取消", "cancel", "aborted", "reset"]):
                 print("\n设备已断开连接（OTA可能已完成，设备正在重启）")
+                self._ota_ack_event = None
                 return True
             print(f"\nOTA升级失败: {e}")
             await self.ota_abort()
+            self._ota_ack_event = None
             return False
         except Exception as e:
             print(f"\nOTA升级失败: {e}")
             await self.ota_abort()
+            self._ota_ack_event = None
             return False

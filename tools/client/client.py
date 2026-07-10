@@ -86,7 +86,7 @@ class BLEDeviceManagerClient:
         self.address = device.address
         print(f"\n连接设备: {device.name} ({device.address})")
         try:
-            self.client = BleakClient(device, timeout=15)
+            self.client = BleakClient(device, timeout=15, use_cached=False)
             await self.client.connect()
             mtu = self.client.mtu_size
             print(f"连接成功 (MTU={mtu})")

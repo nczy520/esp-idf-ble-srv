@@ -240,7 +240,6 @@ bool ble_srv_init(void)
     ble_srv_led_init();
 #endif
 
-    // 初始化温度传感器
     ble_srv_temp_sensor_init();
 
     ESP_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);

@@ -63,6 +63,16 @@ menu "BLE Service"
                 Default firmware URL for URL OTA update.
                 Can be overridden at runtime via BLE command.
                 Example: https://example.com/firmware.bin
+
+        config BLE_SRV_OTA_URL_SKIP_CERT_CHECK
+            bool "Skip Certificate Common Name Check"
+            default n
+            depends on BLE_SRV_OTA_URL_ENABLED
+            help
+                Skip server certificate common name (CN) verification during HTTPS OTA.
+                This disables ALL server-name authentication (CN/SAN/SNI).
+                Only enable this for testing or when using self-signed certificates
+                with incorrect hostname. Not recommended for production.
     endmenu
 
     menu "WiFi"
