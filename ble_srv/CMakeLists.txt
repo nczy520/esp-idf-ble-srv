@@ -1,5 +1,6 @@
 set(ble_srv_srcs "src/ble_srv_core.c"
                  "src/ble_srv_gatt.c"
+                 "src/ble_srv_ota_common.c"
                  "src/ble_srv_ota_bt.c"
                  "src/ble_srv_ota_url.c"
                  "src/ble_srv_device.c"

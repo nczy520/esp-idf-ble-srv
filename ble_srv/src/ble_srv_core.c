@@ -2,6 +2,7 @@
 #include "ble_srv_gatt.h"
 #include "ble_srv_ota_common.h"
 #include "ble_srv_ota_bt.h"
+#include "ble_srv_ota_url.h"
 #include "ble_srv_led.h"
 #include "ble_srv_temp_sensor.h"
 #include <stdio.h>
@@ -113,8 +114,8 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
-        ble_srv_ota_bt_reset();
-        vTaskDelay(pdMS_TO_TICKS(100));
+        ble_srv_ota_abort(BLE_OTA_ERR_DISCONNECTED);
+        vTaskDelay(pdMS_TO_TICKS(200));
         ble_srv_start_advertising();
         break;
 
@@ -234,7 +235,10 @@ bool ble_srv_init(void)
 
     nimble_port_freertos_init(ble_srv_host_task);
 
+    ble_srv_ota_init();
+
     ble_srv_ota_bt_init();
+    ble_srv_ota_url_init();
 
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
     ble_srv_led_init();
@@ -250,14 +254,18 @@ void ble_srv_deinit(void)
 {
     ESP_LOGI(TAG, "Deinitializing BLE Service");
 
-    ble_srv_ota_bt_reset();
+    ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
+    vTaskDelay(pdMS_TO_TICKS(300));
 
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
     ble_srv_led_deinit();
 #endif
 
-    // 反初始化温度传感器
     ble_srv_temp_sensor_deinit();
+
+    ble_srv_ota_url_deinit();
+    ble_srv_ota_bt_deinit();
+    ble_srv_ota_deinit();
 
     nimble_port_stop();
     nimble_port_deinit();

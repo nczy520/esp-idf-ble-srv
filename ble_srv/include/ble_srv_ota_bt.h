@@ -29,8 +29,8 @@ typedef struct __attribute__((packed)) {
 
 bool ble_srv_ota_bt_init(void);
 void ble_srv_ota_bt_deinit(void);
-void ble_srv_ota_bt_reset(void);
-void ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len);
+void ble_srv_ota_bt_handle_abort(void);
+bool ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len);
 bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len);
 
 #ifdef __cplusplus

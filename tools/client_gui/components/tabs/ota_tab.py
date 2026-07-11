@@ -70,9 +70,28 @@ class OTATabComponent(BaseTabComponent):
 
         self.ota_overlay = self._build_overlay()
 
+        ota_notice = ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=18, color=ft.Colors.ORANGE_700),
+                    ft.Text("OTA升级注意事项", size=13, weight=ft.FontWeight.W_700, color=ft.Colors.ORANGE_700),
+                ], spacing=6, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Container(height=4),
+                ft.Text("• 升级中请勿断开蓝牙/电源，确保固件与设备型号匹配，否则可能变砖", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text("• 蓝牙OTA速度较慢，大固件建议URL升级（需设备已连WiFi）", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text("• 升级完成后设备将自动重启，属于正常现象", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+            ], spacing=2),
+            padding=ft.padding.Padding(12, 10, 12, 10),
+            bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.ORANGE),
+            border_radius=8,
+            border=ft.border.BorderSide(1, ft.Colors.with_opacity(0.3, ft.Colors.ORANGE)),
+        )
+
         return ft.Stack([
             ft.Container(
                 content=ft.Column([
+                    ota_notice,
+                    ft.Container(height=8),
                     # 蓝牙OTA区域
                     ft.Row([
                         ft.Text("蓝牙OTA", size=13, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE),
@@ -94,12 +113,10 @@ class OTATabComponent(BaseTabComponent):
                         self.ota_status_text,
                     ], spacing=8, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     ft.Container(height=8),
-                    self.ota_progress,
-                    ft.Container(height=12),
-                    # 中止按钮放在进度条下面
                     ft.Row([
+                        self.ota_progress,
                         self.ota_abort_btn,
-                    ], spacing=8, alignment=ft.MainAxisAlignment.START),
+                    ], spacing=8, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ], spacing=0, scroll=ft.ScrollMode.AUTO),
                 padding=16,
                 bgcolor=ft.Colors.WHITE,

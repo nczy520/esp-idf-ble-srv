@@ -1,0 +1,361 @@
+#include "ble_srv_ota_common.h"
+#include "ble_srv_gatt.h"
+#include "ble_srv.h"
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "host/ble_hs.h"
+#include "host/ble_gatt.h"
+
+static const char *TAG = "OTA";
+
+static SemaphoreHandle_t s_lock = NULL;
+
+static volatile ble_ota_mode_t s_mode = BLE_OTA_MODE_NONE;
+static volatile ble_ota_state_t s_state = BLE_OTA_STATE_IDLE;
+static volatile ble_ota_err_t s_error = BLE_OTA_ERR_NONE;
+static volatile bool s_abort_requested = false;
+static volatile uint8_t s_session_gen = 0;
+
+static uint32_t s_fw_size = 0;
+static uint32_t s_bytes_received = 0;
+static uint32_t s_bytes_written = 0;
+
+static ble_srv_status_cb_t s_status_cb = NULL;
+
+#define OTA_LOCK()     do { if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY); } while(0)
+#define OTA_UNLOCK()   do { if (s_lock) xSemaphoreGive(s_lock); } while(0)
+
+static bool is_terminal_state(ble_ota_state_t state)
+{
+    switch (state) {
+    case BLE_OTA_STATE_CHECK_FAIL:
+    case BLE_OTA_STATE_VERIFY_FAIL:
+    case BLE_OTA_STATE_APPLY_FAIL:
+    case BLE_OTA_STATE_ABORTED:
+    case BLE_OTA_STATE_ERROR:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool gen_valid_locked(uint8_t gen)
+{
+    return gen != BLE_OTA_INVALID_GEN && gen == s_session_gen;
+}
+
+static void do_push_status_locked(void)
+{
+    uint16_t conn_handle = ble_srv_get_conn_handle();
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+    if (!g_ota_status_notify_enabled) {
+        return;
+    }
+
+    uint32_t report = (s_bytes_received > s_bytes_written) ? s_bytes_received : s_bytes_written;
+
+    ble_ota_status_t status = {
+        .state         = (uint8_t)s_state,
+        .error_code    = (uint8_t)s_error,
+        .fw_size       = s_fw_size,
+        .bytes_written = report,
+        .progress      = (s_fw_size > 0) ? (uint8_t)((report * 100) / s_fw_size) : 0,
+    };
+
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(&status, sizeof(status));
+    if (!om) {
+        return;
+    }
+
+    int rc = ble_gatts_notify_custom(conn_handle, g_ota_status_chr_val_handle, om);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "notify failed: rc=%d", rc);
+    }
+
+    if (s_status_cb) {
+        s_status_cb(&status);
+    }
+}
+
+bool ble_srv_ota_init(void)
+{
+    s_lock = xSemaphoreCreateMutex();
+    if (!s_lock) {
+        ESP_LOGE(TAG, "Failed to create lock");
+        return false;
+    }
+    s_mode = BLE_OTA_MODE_NONE;
+    s_state = BLE_OTA_STATE_IDLE;
+    s_error = BLE_OTA_ERR_NONE;
+    s_abort_requested = false;
+    s_session_gen = 0;
+    s_fw_size = 0;
+    s_bytes_received = 0;
+    s_bytes_written = 0;
+    ESP_LOGI(TAG, "OTA module initialized");
+    return true;
+}
+
+void ble_srv_ota_deinit(void)
+{
+    OTA_LOCK();
+    s_abort_requested = true;
+    ble_ota_mode_t mode = s_mode;
+    s_state = BLE_OTA_STATE_ABORTING;
+    s_error = BLE_OTA_ERR_ABORTED;
+    OTA_UNLOCK();
+
+    if (mode == BLE_OTA_MODE_BT) {
+        extern void ble_srv_ota_bt_handle_abort(void);
+        ble_srv_ota_bt_handle_abort();
+    } else if (mode == BLE_OTA_MODE_URL) {
+        extern void ble_srv_ota_url_handle_abort(void);
+        ble_srv_ota_url_handle_abort();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    if (s_lock) {
+        vSemaphoreDelete(s_lock);
+        s_lock = NULL;
+    }
+}
+
+uint8_t ble_srv_ota_begin(ble_ota_mode_t mode)
+{
+    if (mode == BLE_OTA_MODE_NONE) {
+        ESP_LOGE(TAG, "begin: invalid mode");
+        return BLE_OTA_INVALID_GEN;
+    }
+
+    OTA_LOCK();
+
+    if (s_state != BLE_OTA_STATE_IDLE) {
+        ESP_LOGW(TAG, "begin: OTA busy, mode=%d, state=%d", s_mode, s_state);
+        OTA_UNLOCK();
+        return BLE_OTA_INVALID_GEN;
+    }
+
+    s_session_gen++;
+    if (s_session_gen == BLE_OTA_INVALID_GEN) {
+        s_session_gen++;
+    }
+
+    uint8_t gen = s_session_gen;
+    s_mode = mode;
+    s_state = BLE_OTA_STATE_IDLE;
+    s_error = BLE_OTA_ERR_NONE;
+    s_abort_requested = false;
+    s_fw_size = 0;
+    s_bytes_received = 0;
+    s_bytes_written = 0;
+
+    do_push_status_locked();
+
+    OTA_UNLOCK();
+
+    ESP_LOGI(TAG, "OTA session begun: mode=%s, gen=%u",
+             mode == BLE_OTA_MODE_BT ? "BT" : (mode == BLE_OTA_MODE_URL ? "URL" : "?"),
+             gen);
+    return gen;
+}
+
+void ble_srv_ota_abort(ble_ota_err_t reason)
+{
+    OTA_LOCK();
+
+    if (s_state == BLE_OTA_STATE_IDLE || s_state == BLE_OTA_STATE_APPLY_OK) {
+        OTA_UNLOCK();
+        return;
+    }
+
+    if (s_state == BLE_OTA_STATE_ABORTING || s_state == BLE_OTA_STATE_ABORTED || is_terminal_state(s_state)) {
+        OTA_UNLOCK();
+        return;
+    }
+
+    s_abort_requested = true;
+    ble_ota_state_t prev_state = s_state;
+    ble_ota_mode_t mode = s_mode;
+    s_state = BLE_OTA_STATE_ABORTING;
+    s_error = reason;
+
+    do_push_status_locked();
+    OTA_UNLOCK();
+
+    ESP_LOGW(TAG, "OTA abort requested, reason=%d, prev_state=%d, mode=%d", reason, prev_state, mode);
+
+    if (mode == BLE_OTA_MODE_BT) {
+        extern void ble_srv_ota_bt_handle_abort(void);
+        ble_srv_ota_bt_handle_abort();
+    } else if (mode == BLE_OTA_MODE_URL) {
+        extern void ble_srv_ota_url_handle_abort(void);
+        ble_srv_ota_url_handle_abort();
+    }
+}
+
+void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error)
+{
+    OTA_LOCK();
+
+    if (!gen_valid_locked(gen)) {
+        ESP_LOGW(TAG, "finish: stale gen=%u, current=%u, ignoring", gen, s_session_gen);
+        OTA_UNLOCK();
+        return;
+    }
+
+    if (s_mode == BLE_OTA_MODE_NONE && s_state == BLE_OTA_STATE_IDLE) {
+        OTA_UNLOCK();
+        return;
+    }
+
+    ble_ota_mode_t finished_mode = s_mode;
+    bool is_apply_ok = (result == BLE_OTA_STATE_APPLY_OK);
+    bool is_terminal = is_terminal_state(result);
+
+    s_state = result;
+    s_error = error;
+    s_abort_requested = false;
+
+    do_push_status_locked();
+
+    if (is_terminal) {
+        s_mode = BLE_OTA_MODE_NONE;
+        s_state = BLE_OTA_STATE_IDLE;
+        s_error = BLE_OTA_ERR_NONE;
+        s_abort_requested = false;
+        s_fw_size = 0;
+        s_bytes_received = 0;
+        s_bytes_written = 0;
+
+        do_push_status_locked();
+    }
+
+    OTA_UNLOCK();
+
+    ESP_LOGI(TAG, "OTA session finished: mode=%s, result=%d, error=%d, gen=%u",
+             finished_mode == BLE_OTA_MODE_BT ? "BT" : (finished_mode == BLE_OTA_MODE_URL ? "URL" : "?"),
+             result, error, gen);
+
+    if (is_apply_ok) {
+        ESP_LOGI(TAG, "OTA apply OK, rebooting in 3s...");
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        esp_restart();
+    }
+}
+
+bool ble_srv_ota_is_abort_requested(void)
+{
+    return s_abort_requested;
+}
+
+bool ble_srv_ota_is_active(void)
+{
+    OTA_LOCK();
+    bool active = (s_state != BLE_OTA_STATE_IDLE);
+    OTA_UNLOCK();
+    return active;
+}
+
+ble_ota_mode_t ble_srv_ota_get_mode(void)
+{
+    OTA_LOCK();
+    ble_ota_mode_t m = s_mode;
+    OTA_UNLOCK();
+    return m;
+}
+
+ble_ota_state_t ble_srv_ota_get_state(void)
+{
+    OTA_LOCK();
+    ble_ota_state_t st = s_state;
+    OTA_UNLOCK();
+    return st;
+}
+
+uint8_t ble_srv_ota_get_current_gen(void)
+{
+    return s_session_gen;
+}
+
+bool ble_srv_ota_gen_valid(uint8_t gen)
+{
+    return gen != BLE_OTA_INVALID_GEN && gen == s_session_gen;
+}
+
+void ble_srv_ota_set_state(uint8_t gen, ble_ota_state_t state, ble_ota_err_t error)
+{
+    OTA_LOCK();
+    if (!gen_valid_locked(gen)) {
+        OTA_UNLOCK();
+        return;
+    }
+    if (s_state != state || s_error != error) {
+        s_state = state;
+        s_error = error;
+        do_push_status_locked();
+    }
+    OTA_UNLOCK();
+}
+
+void ble_srv_ota_set_fw_size(uint8_t gen, uint32_t fw_size)
+{
+    OTA_LOCK();
+    if (!gen_valid_locked(gen)) {
+        OTA_UNLOCK();
+        return;
+    }
+    s_fw_size = fw_size;
+    s_bytes_received = 0;
+    s_bytes_written = 0;
+    OTA_UNLOCK();
+}
+
+void ble_srv_ota_report_progress(uint8_t gen, uint32_t bytes_received, uint32_t bytes_written)
+{
+    OTA_LOCK();
+    if (!gen_valid_locked(gen)) {
+        OTA_UNLOCK();
+        return;
+    }
+    s_bytes_received = bytes_received;
+    s_bytes_written = bytes_written;
+    OTA_UNLOCK();
+}
+
+void ble_srv_ota_push_status(uint8_t gen)
+{
+    OTA_LOCK();
+    if (!gen_valid_locked(gen)) {
+        OTA_UNLOCK();
+        return;
+    }
+    do_push_status_locked();
+    OTA_UNLOCK();
+}
+
+bool ble_srv_ota_get_status(ble_ota_status_t *status)
+{
+    if (!status) {
+        return false;
+    }
+    OTA_LOCK();
+    uint32_t report = (s_bytes_received > s_bytes_written) ? s_bytes_received : s_bytes_written;
+    status->state = (uint8_t)s_state;
+    status->error_code = (uint8_t)s_error;
+    status->fw_size = s_fw_size;
+    status->bytes_written = report;
+    status->progress = (s_fw_size > 0) ? (uint8_t)((report * 100) / s_fw_size) : 0;
+    OTA_UNLOCK();
+    return true;
+}
+
+void ble_srv_ota_register_status_cb(ble_srv_status_cb_t cb)
+{
+    s_status_cb = cb;
+}

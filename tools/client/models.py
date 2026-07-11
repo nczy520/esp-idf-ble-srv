@@ -17,7 +17,9 @@ class OTAState:
     APPLYING = 0x08
     APPLY_OK = 0x09
     APPLY_FAIL = 0x0A
-    ERROR = 0x0B
+    ABORTING = 0x0B
+    ABORTED = 0x0C
+    ERROR = 0x0D
 
 class OTAError:
     NONE = 0x00
@@ -29,6 +31,8 @@ class OTAError:
     INTERNAL = 0x06
     BUSY = 0x07
     NO_NETWORK = 0x08
+    ABORTED = 0x09
+    DISCONNECTED = 0x0A
 
 class DeviceInfo:
     def __init__(self, data):
@@ -124,6 +128,9 @@ class OTAStatus:
     def __str__(self):
         state_names = {
             OTAState.IDLE: "空闲",
+            OTAState.CHECKING: "检查版本中",
+            OTAState.CHECK_OK: "版本检查通过",
+            OTAState.CHECK_FAIL: "无需更新",
             OTAState.RECEIVING: "接收中",
             OTAState.VERIFYING: "校验中",
             OTAState.VERIFY_OK: "校验成功",
@@ -131,6 +138,8 @@ class OTAStatus:
             OTAState.APPLYING: "应用中",
             OTAState.APPLY_OK: "应用成功",
             OTAState.APPLY_FAIL: "应用失败",
+            OTAState.ABORTING: "中止中",
+            OTAState.ABORTED: "已中止",
             OTAState.ERROR: "错误"
         }
         error_names = {
@@ -142,7 +151,9 @@ class OTAStatus:
             OTAError.VERIFY_FAILED: "校验失败",
             OTAError.INTERNAL: "内部错误",
             OTAError.BUSY: "设备忙",
-            OTAError.NO_NETWORK: "网络未连接"
+            OTAError.NO_NETWORK: "网络未连接",
+            OTAError.ABORTED: "用户中止",
+            OTAError.DISCONNECTED: "连接断开"
         }
         return f"状态: {state_names.get(self.state, f'未知({self.state})')}\n错误: {error_names.get(self.error_code, f'未知({self.error_code})')}\n固件大小: {self.fw_size} bytes\n已写入: {self.bytes_written} bytes\n进度: {self.progress}%"
 

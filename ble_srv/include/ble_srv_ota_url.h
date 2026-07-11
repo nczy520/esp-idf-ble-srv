@@ -21,9 +21,7 @@ typedef enum {
 bool ble_srv_ota_url_init(void);
 void ble_srv_ota_url_deinit(void);
 bool ble_srv_ota_url_start(const char *url);
-bool ble_srv_ota_url_start_default(void);
-void ble_srv_ota_url_abort(void);
-bool ble_srv_ota_url_is_running(void);
+void ble_srv_ota_url_handle_abort(void);
 
 #ifdef __cplusplus
 }

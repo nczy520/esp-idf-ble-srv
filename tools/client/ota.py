@@ -95,8 +95,8 @@ class OTAMixin:
                     if self.ota_status.state == OTAState.VERIFY_OK:
                         print("\nOTA校验成功")
                         return True
-                    elif self.ota_status.state in [OTAState.VERIFY_FAIL, OTAState.ERROR]:
-                        print(f"\nOTA校验失败: {self.ota_status}")
+                    elif self.ota_status.state in [OTAState.VERIFY_FAIL, OTAState.ERROR, OTAState.ABORTED]:
+                        print(f"\nOTA校验失败或中止: {self.ota_status}")
                         return False
             print("\nOTA校验超时")
             return False
@@ -194,6 +194,12 @@ class OTAMixin:
                         else:
                             print(f"  ❌ OTA过程发生错误: {self.ota_status}")
                         break
+                    elif state == OTAState.ABORTED:
+                        print("  ⚠️ OTA已中止")
+                        break
+                    elif state == OTAState.ABORTING:
+                        if state != last_state:
+                            print("  正在中止...")
 
             return True
         except (BleakError, OSError) as e:

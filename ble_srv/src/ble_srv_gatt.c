@@ -1,12 +1,10 @@
 #include "ble_srv_gatt.h"
 #include "ble_srv_ota_common.h"
 #include "ble_srv_ota_bt.h"
+#include "ble_srv_ota_url.h"
 #include "ble_srv_device.h"
 #include "ble_srv_wifi.h"
 #include "ble_srv_led.h"
-#ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
-#include "ble_srv_ota_url.h"
-#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -325,7 +323,17 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         }
 
         if (attr_handle == g_ota_bt_cmd_chr_val_handle) {
-            ble_srv_ota_bt_dispatch_cmd(s_write_buf, data_len);
+            if (data_len < 1) {
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            }
+            ble_ota_bt_cmd_t bt_cmd = (ble_ota_bt_cmd_t)s_write_buf[0];
+            if (bt_cmd == BLE_OTA_BT_CMD_START && data_len < 1 + (int)sizeof(ble_ota_bt_start_req_t)) {
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            }
+            bool ok = ble_srv_ota_bt_dispatch_cmd(s_write_buf, data_len);
+            if (!ok && bt_cmd == BLE_OTA_BT_CMD_START) {
+                return BLE_ATT_ERR_UNLIKELY;
+            }
         }
 #ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
         else if (attr_handle == g_ota_url_chr_val_handle) {
@@ -343,14 +351,24 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                     char url[BLE_OTA_URL_MAX_URL_LEN + 1] = {0};
                     memcpy(url, s_write_buf + 1, url_len);
                     url[url_len] = '\0';
-                    ble_srv_ota_url_start(url);
+                    if (!ble_srv_ota_url_start(url)) {
+                        return BLE_ATT_ERR_UNLIKELY;
+                    }
                 }
                 break;
-            case BLE_OTA_URL_CMD_START_DEFAULT:
-                ble_srv_ota_url_start_default();
+            case BLE_OTA_URL_CMD_START_DEFAULT: {
+                const char *default_url = CONFIG_BLE_SRV_OTA_URL_DEFAULT;
+                if (strlen(default_url) == 0) {
+                    ESP_LOGE(TAG, "Default OTA URL is empty");
+                    return BLE_ATT_ERR_UNLIKELY;
+                }
+                if (!ble_srv_ota_url_start(default_url)) {
+                    return BLE_ATT_ERR_UNLIKELY;
+                }
                 break;
+            }
             case BLE_OTA_URL_CMD_ABORT:
-                ble_srv_ota_url_abort();
+                ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
                 break;
             default:
                 break;
