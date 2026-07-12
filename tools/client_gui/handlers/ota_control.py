@@ -153,10 +153,14 @@ class OTAControlHandler(BaseHandler):
         if not fw_path or not os.path.exists(fw_path):
             self.log("请选择有效的固件文件", "warn")
             return
+        fw_size = os.path.getsize(fw_path)
+        est_speed = 20 * 1024
+        est_transfer = fw_size / est_speed if est_speed > 0 else 120
+        timeout = max(300, int(est_transfer * 3))
         self.ota_running = True
         self.ui.ota_progress.value = 0
         self.ui.ota_status_text.value = "正在启动蓝牙OTA..."
-        self.log(f"开始蓝牙OTA升级: {os.path.basename(fw_path)}", "info")
+        self.log(f"开始蓝牙OTA升级: {os.path.basename(fw_path)} ({fw_size/1024:.1f}KB, 预计超时{timeout}秒)", "info")
         btn = self.ui.ota_tab.ota_bt_btn
         self._set_ota_buttons_disabled(True)
 
@@ -201,7 +205,7 @@ class OTAControlHandler(BaseHandler):
                 self.ui.ota_status_text.value = f"OTA失败: {msg}"
                 self._set_ota_buttons_disabled(False)
 
-        self._run_with_loading(btn, self.ble.ota_update(fw_path, progress_cb=progress_cb), callback, loading_text="OTA中...", timeout=120)
+        self._run_with_loading(btn, self.ble.ota_update(fw_path, progress_cb=progress_cb), callback, loading_text="OTA中...", timeout=timeout)
 
     def start_ota_url(self, event=None):
         """开始URL OTA升级"""

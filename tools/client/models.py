@@ -33,6 +33,8 @@ class OTAError:
     NO_NETWORK = 0x08
     ABORTED = 0x09
     DISCONNECTED = 0x0A
+    VERSION_DOWNGRADE = 0x0B
+    VERSION_SAME = 0x0C
 
 class DeviceInfo:
     def __init__(self, data):
@@ -153,7 +155,9 @@ class OTAStatus:
             OTAError.BUSY: "设备忙",
             OTAError.NO_NETWORK: "网络未连接",
             OTAError.ABORTED: "用户中止",
-            OTAError.DISCONNECTED: "连接断开"
+            OTAError.DISCONNECTED: "连接断开",
+            OTAError.VERSION_DOWNGRADE: "远程版本更旧",
+            OTAError.VERSION_SAME: "版本相同"
         }
         return f"状态: {state_names.get(self.state, f'未知({self.state})')}\n错误: {error_names.get(self.error_code, f'未知({self.error_code})')}\n固件大小: {self.fw_size} bytes\n已写入: {self.bytes_written} bytes\n进度: {self.progress}%"
 

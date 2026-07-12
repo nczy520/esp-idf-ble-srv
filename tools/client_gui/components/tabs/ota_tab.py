@@ -91,7 +91,7 @@ class OTATabComponent(BaseTabComponent):
             ft.Container(
                 content=ft.Column([
                     ota_notice,
-                    ft.Container(height=8),
+                    ft.Container(height=16),
                     # 蓝牙OTA区域
                     ft.Row([
                         ft.Text("蓝牙OTA", size=13, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE),
