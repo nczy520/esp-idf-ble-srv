@@ -40,7 +40,6 @@ class InfoTabComponent(BaseTabComponent):
             ("CPU", ft.Icons.SPEED, "read_cpu_info", ft.Colors.BLUE),
             ("Flash", ft.Icons.STORAGE, "read_flash_info", ft.Colors.BLUE),
             ("分区", ft.Icons.FOLDER_OPEN, "read_partitions", ft.Colors.BLUE),
-            ("温度", ft.Icons.THERMOSTAT, "read_temperature", ft.Colors.BLUE),
             ("重启", ft.Icons.RESTART_ALT, "restart_device", ft.Colors.RED),
         ]
         self.info_btns = []

@@ -1,6 +1,6 @@
 """
 设备信息处理模块
-处理设备信息、内存、CPU、Flash、分区、温度等读取操作
+处理设备信息、内存、CPU、Flash、分区等读取操作
 """
 
 import time
@@ -105,32 +105,10 @@ class DeviceInfoHandler(BaseHandler):
 
         self._run_with_loading(btn, self.ble.read_all_partitions(), callback, loading_text="读取中...")
 
-    def read_temperature(self, event=None):
-        if not self.check_connected():
-            return
-        self.log("读取温度...", "info")
-        btn = self.ui.info_tab.info_btns[5]
-
-        def callback(result):
-            if isinstance(result, Exception):
-                self.log(f"读取温度失败: {result}", "error")
-                return
-            if result is None:
-                self.log("读取温度失败", "error")
-            elif result <= -900.0:
-                self.ui.info_display.value = "温度传感器: 不支持或未启用"
-                self.log("温度传感器不支持", "warn")
-            else:
-                self.ui.info_display.value = f"当前温度: {result:.2f}°C"
-                self.log(f"温度: {result:.2f}°C", "success")
-            self.safe_update()
-
-        self._run_with_loading(btn, self.ble.read_temperature(), callback, loading_text="读取中...")
-
     def restart_device(self, event=None):
         if not self.check_connected():
             return
-        btn = self.ui.info_tab.info_btns[6]
+        btn = self.ui.info_tab.info_btns[5]
 
         def do_restart(dlg):
             dlg.open = False

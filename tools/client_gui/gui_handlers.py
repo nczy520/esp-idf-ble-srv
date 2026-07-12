@@ -80,9 +80,6 @@ class GuiHandlers:
     def read_partitions(self, event=None):
         self.device_info.read_partitions(event)
 
-    def read_temperature(self, event=None):
-        self.device_info.read_temperature(event)
-
     def restart_device(self, event=None):
         self.device_info.restart_device(event)
 

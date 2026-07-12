@@ -22,7 +22,6 @@ typedef enum {
     BLE_SRV_CMD_GET_CPU = 0x03,
     BLE_SRV_CMD_GET_FLASH = 0x04,
     BLE_SRV_CMD_RESTART = 0x05,
-    BLE_SRV_CMD_GET_TEMPERATURE = 0x06,
 } ble_srv_cmd_t;
 
 typedef struct __attribute__((packed)) {

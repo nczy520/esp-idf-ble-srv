@@ -95,6 +95,7 @@ class BleCore:
         self._ota_ack_event = None
         self._ota_url_status_callback = None
         self._ota_notify_started = False
+        self._notify_gen = 0
         self._ota_session_id = 0
         self._ota_active = False
         self._ota_mode = None
@@ -141,16 +142,20 @@ class BleCore:
             ack_event.set()
 
     async def _stop_ota_notify(self):
-        if self._ota_notify_started and self.ble_client and self._is_connected:
+        notify_gen = self._notify_gen
+        client = self.ble_client
+        if self._ota_notify_started and client and self._is_connected:
             try:
-                await self.ble_client.stop_notify(BLE_OTA_STATUS_CHAR_UUID)
+                await client.stop_notify(BLE_OTA_STATUS_CHAR_UUID)
             except Exception:
                 pass
-        self._ota_notify_started = False
+        if self._notify_gen == notify_gen:
+            self._ota_notify_started = False
 
     async def _start_ota_notify(self):
         if not self._ota_notify_started and self.ble_client and self._is_connected:
             try:
+                self._notify_gen += 1
                 await self.ble_client.start_notify(BLE_OTA_STATUS_CHAR_UUID, self._ota_status_handler)
                 self._ota_notify_started = True
             except Exception as e:
@@ -305,6 +310,7 @@ class BleCore:
         self._is_connected = False
         self.connected_time = None
         self._ota_notify_started = False
+        self._notify_gen += 1
         self._reset_ota_state()
         if not self._restart_in_progress:
             self._log("设备已断开连接", "warn")
@@ -457,6 +463,7 @@ class BleCore:
                 except Exception:
                     pass
             self._connect_gen += 1
+            self._notify_gen += 1
             try:
                 await asyncio.sleep(0.3)
             except Exception:
@@ -537,16 +544,6 @@ class BleCore:
             if part:
                 partitions.append(part)
         return partitions
-
-    async def read_temperature(self):
-        data = await self._read_gatt(BLE_DM_INFO_CHAR_UUID)
-        if data and len(data) >= 123:
-            temp = struct.unpack('<f', data[118:122])[0]
-            supported = struct.unpack('<B', data[122:123])[0]
-            if not supported:
-                return -999.0
-            return temp
-        return None
 
     async def restart_device(self):
         if not self.connected:
@@ -1021,9 +1018,7 @@ class BleCore:
                 self._ota_mode = None
                 if is_bt_ota and self._ota_ack_event:
                     self._ota_ack_event.set()
-                if self.event_loop and self.event_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self._stop_ota_notify(), self.event_loop)
-                else:
-                    self._ota_notify_started = False
+                self._notify_gen += 1
+                self._ota_notify_started = False
         except Exception:
             pass
