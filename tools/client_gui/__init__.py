@@ -116,6 +116,11 @@ class BleDeviceManager:
         # 设置BLE断开连接回调
         def ble_disconnect_callback():
             self.handlers.connection.update_connection_ui(False)
+            self.handlers.ota_control._reset_ota_ui_on_disconnect()
+            self.handlers.led_control._reset_led_ui_on_disconnect()
+            self.handlers.wifi_control._reset_wifi_ui_on_disconnect()
+            self.handlers.device_info._reset_device_info_ui_on_disconnect()
+            self.handlers.connection.ble_log("连接断开，已重置所有状态", "warn")
         self.ble.set_disconnect_callback(ble_disconnect_callback)
         
         # 设置页面对象用于UI更新

@@ -11,6 +11,15 @@ from client_gui.handlers.base import BaseHandler
 class LEDControlHandler(BaseHandler):
     """LED控制处理类"""
 
+    def _reset_led_ui_on_disconnect(self):
+        """断开连接时重置LED UI状态"""
+        self.ui.led_status_text.value = "状态: 未连接"
+        self.ui.color_box.bgcolor = ft.Colors.GREY_300
+        self.ui.r_slider.value = 255
+        self.ui.g_slider.value = 255
+        self.ui.b_slider.value = 255
+        self.page.update()
+
     def color_changed(self, event=None):
         """颜色滑块变化"""
         try:

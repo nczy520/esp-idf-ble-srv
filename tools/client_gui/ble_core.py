@@ -280,8 +280,8 @@ class BleCore:
 
     def _on_disconnect(self, client):
         self._is_connected = False
-        self._ota_active = False
         self._ota_notify_started = False
+        self._reset_ota_state()
         if not self._restart_in_progress:
             self._log("设备已断开连接", "warn")
         if self._disconnect_callback:

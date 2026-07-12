@@ -9,6 +9,11 @@ from client_gui.handlers.base import BaseHandler
 class WiFiControlHandler(BaseHandler):
     """WiFi控制处理类"""
 
+    def _reset_wifi_ui_on_disconnect(self):
+        """断开连接时重置WiFi UI状态"""
+        self.ui.wifi_display.value = "未连接"
+        self.page.update()
+
     def wifi_connect(self, event=None):
         if not self.check_connected():
             return

@@ -13,6 +13,11 @@ from client_gui.handlers.base import BaseHandler
 class DeviceInfoHandler(BaseHandler):
     """设备信息处理类"""
 
+    def _reset_device_info_ui_on_disconnect(self):
+        """断开连接时重置设备信息UI状态"""
+        self.ui.info_display.value = "未连接"
+        self.page.update()
+
     def read_device_info(self, event=None):
         if not self.check_connected():
             return

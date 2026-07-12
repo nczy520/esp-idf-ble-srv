@@ -114,7 +114,12 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
+        g_ota_status_notify_enabled = false;
+        g_wifi_status_notify_enabled = false;
         ble_srv_ota_abort(BLE_OTA_ERR_DISCONNECTED);
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
+        ble_srv_led_set_on(false);
+#endif
         vTaskDelay(pdMS_TO_TICKS(200));
         ble_srv_start_advertising();
         break;

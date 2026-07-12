@@ -28,6 +28,19 @@ class OTAControlHandler(BaseHandler):
         self.ui.ota_abort_btn.disabled = not disabled
         self.page.update()
 
+    def _reset_ota_ui_on_disconnect(self):
+        """断开连接时重置OTA UI状态"""
+        self.ota_running = False
+        self._ota_url_check_done = False
+        self._ota_url_start_time = 0
+        self.ui.ota_progress.value = 0
+        self.ui.ota_status_text.value = "未连接"
+        self.ui.ota_bt_btn.disabled = True
+        self.ui.ota_url_btn.disabled = True
+        self.ui.ota_default_btn.disabled = True
+        self.ui.ota_abort_btn.disabled = True
+        self.page.update()
+
     def _ota_url_status_callback(self, status, data):
         """URL OTA状态回调"""
         if status == "checking":
