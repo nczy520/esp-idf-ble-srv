@@ -3,18 +3,18 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Version](https://img.shields.io/badge/version-1.1.0-blueviolet)](https_ota/idf_component.yml)
+[![Version](https://img.shields.io/badge/version-1.2.1-blueviolet)](ble_srv/idf_component.yml)
 
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 1.1.0 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 1.2.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
-- **设备信息查询** — 芯片型号、Flash 大小、MAC 地址、固件版本、CPU 频率
-- **内存/CPU/Flash/分区监控** — 堆内存使用、运行时间、分区列表
-- **OTA 固件升级** — 后台写入、CRC 校验、断连自动重置、进度通知
+- **设备信息查询** — 芯片型号、Flash 大小、MAC 地址、固件版本、CPU 频率、核心数、温度、运行时间、重启原因
+- **内存/CPU/Flash/分区监控** — 堆内存使用、任务数、CPU使用率、分区列表、运行分区信息
+- **OTA 固件升级** — 蓝牙/URL双模式、12包滑动窗口ACK协议、CRC32校验、断连自动重置、进度通知、版本检查
 - **WiFi 配网** — BLE 写入 SSID/密码，NVS 持久化，凭据删除，NTP 同步
 - **WS2812 LED 控制** — RGB 颜色设置、呼吸灯/闪烁/彩虹/频闪特效（非阻塞切换）
 - **设备重启** — BLE 远程重启
@@ -30,7 +30,7 @@ ESP32 / ESP32-S2 / ESP32-S3 / ESP32-C3 / ESP32-C6 / ESP32-H2
 将 `ble_srv` 目录复制到你的项目 `components/` 下，或通过 ESP-IDF 组件管理器引入：
 
 ```bash
-idf.py add-dependency "ble_srv^1.1.0"
+idf.py add-dependency "ble_srv^1.2.1"
 ```
 
 ### 2. 配置 menuconfig
@@ -46,6 +46,8 @@ Component config → BLE Service:
   [*] Enable WiFi Provisioner        # WiFi 配网（可选）
   [*] Enable NTP Time Sync           # NTP 同步（可选）
   [*] Enable WS2812 LED Control      # LED 控制（可选）
+  [*] Enable BLE OTA                 # 蓝牙OTA（默认启用）
+  [*] Enable URL OTA                 # URL OTA（默认启用）
 ```
 
 ### 3. 初始化
@@ -76,32 +78,94 @@ idf.py build flash monitor
 | WiFi Service | 0xFFC0 | WiFi 配网 | CONFIG_BLE_SRV_WIFI_PROVISIONER |
 | LED Service | 0xFFB0 | LED 控制 | CONFIG_BLE_SRV_LED |
 
-完整 BLE 命令参考见 [docs/BLE_COMMANDS.md](docs/BLE_COMMANDS.md)。
+完整使用文档见：
+- [docs/BLE_SRV_MODULE.md](docs/BLE_SRV_MODULE.md) — ble_srv 固件模组详细使用说明（API参考、配置选项、GATT协议、OTA机制）
+- [docs/PYTHON_CLI.md](docs/PYTHON_CLI.md) — 命令行客户端详细使用说明
+- [docs/PYTHON_GUI.md](docs/PYTHON_GUI.md) — 图形界面客户端详细使用说明
 
 ## Python 客户端
 
-项目附带 BLE 客户端工具 `tools/client.py`，依赖 `bleak` 库：
+项目附带两个 BLE 客户端工具：
+
+### 命令行客户端 (tools/client.py)
+
+依赖 `bleak` 库：
 
 ```bash
 pip install bleak
 
-# 查看设备信息
-python tools/client.py -d BLE-SRV -c info
+# 查看版本
+python tools/client.py --version
 
-# OTA 升级
-python tools/client.py -d BLE-SRV -c ota -f firmware.bin
+# 扫描设备
+python tools/client.py scan
+
+# 查看设备信息（包含温度）
+python tools/client.py -d BLE-SRV info
+
+# 查看内存/CPU/Flash/分区信息
+python tools/client.py -d BLE-SRV memory
+python tools/client.py -d BLE-SRV cpu
+python tools/client.py -d BLE-SRV flash
+python tools/client.py -d BLE-SRV partition
+
+# 蓝牙 OTA 升级
+python tools/client.py -d BLE-SRV ota-bt -f firmware.bin
+
+# URL OTA 升级（需先连接WiFi）
+python tools/client.py -d BLE-SRV ota-url --url http://example.com/firmware.bin
 
 # WiFi 配网
-python tools/client.py -d BLE-SRV -c wifi-connect --ssid MyWiFi --password 12345678
+python tools/client.py -d BLE-SRV wifi-connect --ssid MyWiFi --password 12345678
+python tools/client.py -d BLE-SRV wifi-status
+python tools/client.py -d BLE-SRV wifi-disconnect
+python tools/client.py -d BLE-SRV wifi-forget
+
+# NTP 时间同步
+python tools/client.py -d BLE-SRV ntp-sync
 
 # LED 控制
-python tools/client.py -d BLE-SRV -c led-on
-python tools/client.py -d BLE-SRV -c led-color --color FF0000
-python tools/client.py -d BLE-SRV -c led-effect --effect breath --speed 80
+python tools/client.py -d BLE-SRV led-on
+python tools/client.py -d BLE-SRV led-off
+python tools/client.py -d BLE-SRV led-color --color FF0000
+python tools/client.py -d BLE-SRV led-status
+python tools/client.py -d BLE-SRV led-effect --effect breath --speed 80
 
-# 查看所有命令
-python tools/client.py -d BLE-SRV -c help
+# 重启设备
+python tools/client.py -d BLE-SRV restart
+
+# 查看帮助
+python tools/client.py -h
 ```
+
+### 图形界面客户端 (tools/client_gui.py)
+
+依赖 `flet` 和 `bleak` 库：
+
+```bash
+pip install flet bleak
+
+# 正常启动
+python tools/client_gui.py
+
+# 查看版本
+python tools/client_gui.py --version
+
+# 调试模式（自动清理 __pycache__）
+python tools/client_gui.py --debug
+
+# 查看帮助
+python tools/client_gui.py -h
+```
+
+## OTA 使用注意事项
+
+1. **每次OTA建议重启设备**，OTA失败的话需要重启设备再次OTA
+2. **蓝牙OTA**时建议关闭其他蓝牙设备以避免干扰，保持设备靠近电脑
+3. **URL OTA**需要设备先连接WiFi，确保URL可访问
+4. OTA过程中**不要断开蓝牙连接**，否则会导致升级失败
+5. 按 **Ctrl+C** 可中止正在进行的CLI蓝牙OTA传输
+6. OTA完成后设备会在3秒后自动重启应用新固件
 
 ## 文件结构
 
@@ -110,14 +174,18 @@ ble_srv/
   include/
     ble_srv.h              # 主聚合头文件
     ble_srv_gatt.h         # GATT 服务与 val_handle
-    ble_srv_ota.h          # OTA 模块
+    ble_srv_ota.h          # OTA 模块（公共层）
+    ble_srv_ota_bt.h       # 蓝牙OTA驱动
+    ble_srv_ota_url.h      # URL OTA驱动
     ble_srv_wifi.h         # WiFi 模块
     ble_srv_led.h          # LED 模块
     ble_srv_device.h       # 设备信息模块
   src/
     ble_srv_core.c         # NimBLE 初始化、GAP、广播
     ble_srv_gatt.c         # GATT 服务定义与 access callback
-    ble_srv_ota.c          # OTA 固件升级（后台写入 + 校验）
+    ble_srv_ota.c          # OTA 公共状态机与会话管理
+    ble_srv_ota_bt.c       # 蓝牙OTA驱动（滑动窗口ACK协议）
+    ble_srv_ota_url.c      # URL OTA驱动
     ble_srv_device.c       # 设备信息读取
     ble_srv_wifi.c         # WiFi 配网
     ble_srv_led.c          # WS2812 LED 驱动（RMT + 非阻塞特效）
@@ -126,9 +194,13 @@ ble_srv/
   Kconfig
   idf_component.yml
 docs/
-  BLE_COMMANDS.md          # BLE 操作命令详细参考
+  PYTHON_CLI.md            # CLI客户端详细使用说明
+  PYTHON_GUI.md            # GUI客户端详细使用说明
 tools/
-  client.py                # Python BLE 客户端
+  client.py                # Python BLE 命令行客户端 v1.2.1
+  client_gui.py            # Python BLE GUI 客户端入口 v1.2.1
+  client/                  # CLI客户端核心模块
+  client_gui/              # GUI客户端模块
 examples/
   basic/                   # 最小示例项目
 ```
@@ -139,17 +211,33 @@ examples/
 |------|------|------|
 | Core | ble_srv_core.c | NimBLE 初始化、GAP 事件处理、广播管理 |
 | GATT | ble_srv_gatt.c | GATT 服务表定义、READ/WRITE access callback |
-| OTA | ble_srv_ota.c | 固件接收（StreamBuffer）、后台写入任务、校验、应用 |
-| Device | ble_srv_device.c | 芯片/内存/CPU/Flash/分区信息采集 |
+| OTA Common | ble_srv_ota.c | OTA 状态机、会话互斥、版本检查、校验、应用 |
+| OTA BT | ble_srv_ota_bt.c | 蓝牙OTA接收（12包滑动窗口ACK、CRC32校验） |
+| OTA URL | ble_srv_ota_url.c | URL OTA（HTTP/HTTPS下载、WiFi状态检查） |
+| Device | ble_srv_device.c | 芯片/内存/CPU/Flash/分区/温度信息采集 |
 | WiFi | ble_srv_wifi.c | WiFi 凭据管理（NVS）、连接/断开/状态查询 |
-| LED | ble_srv_led.c | WS2812 RMT 驱动、非阻塞特效任务（restart 标志切换） |
+| LED | ble_srv_led.c | WS2812 RMT 驱动、非阻塞特效任务 |
 | NTP | ble_srv_ntp.c | SNTP 初始化、多服务器配置、时区设置 |
+
+## OTA 传输协议
+
+蓝牙OTA采用基于累积ACK的滑动窗口协议：
+- 窗口大小：12包
+- 客户端连续发送12包后等待设备ACK
+- 设备端每接收12包发送一次累积ACK（包含已接收字节数）
+- 超时未收到ACK则重传窗口内数据
+- 传输完成后进行CRC32校验确保固件完整性
 
 ## 依赖
 
-- ESP-IDF v5.x / v6.x
+- ESP-IDF v5.x / v6.x（推荐 v6.0+）
 - NimBLE（ESP-IDF 内置）
-- WiFi Provisioner 组件（可选，启用 WiFi 配网时需要）
+- MichMich/esp-idf-wifi-provisioner（WiFi配网组件）
+
+## Python 客户端依赖
+
+- bleak >= 0.20.0（BLE库）
+- flet >= 0.20.0（GUI库，仅GUI客户端需要）
 
 ## License
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ESP32 BLE Device Manager - Flet GUI Client
-跨平台蓝牙BLE设备管理器图形界面客户端 (macOS / Windows)
+ESP32 BLE Device Manager - Flet GUI Client v1.2.1
+跨平台蓝牙BLE设备管理器图形界面客户端 (macOS / Windows / Linux)
 
 开发者: 赵宇
 联系邮箱: support@mdeve.com
@@ -10,7 +10,19 @@ ESP32 BLE Device Manager - Flet GUI Client
 
 用法:
     python client_gui.py              # 正常启动
+    python client_gui.py --version    # 显示版本号
     python client_gui.py --debug      # 调试模式启动（自动清理 __pycache__）
+    python client_gui.py -h           # 显示帮助信息
+
+使用注意事项:
+  1. 首次使用请先安装依赖: pip install flet bleak
+  2. Windows系统请确保蓝牙已开启并授权应用访问
+  3. macOS系统需要在系统设置中允许终端访问蓝牙
+  4. Linux系统需要运行蓝牙服务并具备相应权限
+  5. 每次OTA建议重启设备，OTA失败需要重启设备再次OTA
+  6. 蓝牙OTA传输时请保持设备靠近电脑，避免信号干扰
+  7. URL OTA需要设备先通过GUI连接WiFi
+  8. GUI窗口大小固定为1280x800，不支持缩放
 """
 
 __version__ = "1.2.1"
@@ -43,7 +55,19 @@ def clear_pycache():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='BLE Device Manager')
+    parser = argparse.ArgumentParser(
+        description=f'ESP32 BLE Device Manager GUI v{__version__}',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用注意事项:
+  - 首次使用请安装依赖: pip install flet bleak
+  - Windows/macOS/Linux 均支持
+  - 每次OTA后建议重启设备
+  - OTA失败需要重启设备后再次OTA
+  - URL OTA需要设备先连接WiFi
+        """
+    )
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('--debug', action='store_true', help='调试模式（自动清理 __pycache__）')
     args = parser.parse_args()
 

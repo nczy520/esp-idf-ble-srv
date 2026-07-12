@@ -33,28 +33,43 @@ typedef struct __attribute__((packed)) {
     uint32_t cpu_freq_mhz;
     float temperature_celsius;
     uint8_t temp_sensor_supported;
+    uint8_t reset_reason;
+    uint32_t uptime_seconds;
+    uint8_t cpu_cores;
 } ble_srv_device_info_t;
 
 typedef struct __attribute__((packed)) {
-    uint32_t heap_total;
-    uint32_t heap_free;
-    uint32_t heap_min_free;
-    uint32_t stack_high_watermark;
+    uint32_t internal_total;
+    uint32_t internal_free;
+    uint32_t internal_min_free;
+    uint32_t internal_largest;
     uint32_t psram_total;
     uint32_t psram_free;
     uint32_t psram_min_free;
+    uint32_t psram_largest;
+    uint32_t dma_free;
+    uint32_t total_free;
+    uint16_t task_count;
+    uint16_t stack_hwm;
 } ble_srv_memory_info_t;
 
 typedef struct __attribute__((packed)) {
     uint32_t cpu_freq_mhz;
-    uint32_t cpu_usage;
     uint32_t uptime_seconds;
+    uint32_t features;
+    uint16_t task_count;
+    uint8_t cpu_cores;
+    uint8_t cpu_usage;
+    uint8_t chip_revision;
+    char idf_version[24];
 } ble_srv_cpu_info_t;
 
 typedef struct __attribute__((packed)) {
     uint32_t flash_total;
     uint32_t flash_free;
     uint8_t partition_count;
+    uint8_t flash_speed_mhz;
+    char running_partition[16];
 } ble_srv_flash_info_t;
 
 typedef struct __attribute__((packed)) {

@@ -39,6 +39,21 @@ class OTAError:
     CRC_MISMATCH = 0x0D
 
 class DeviceInfo:
+
+    RESET_REASONS = {
+        0: "未知",
+        1: "上电复位",
+        2: "外部复位",
+        3: "软件复位",
+        4: "异常死机",
+        5: "中断看门狗",
+        6: "任务看门狗",
+        7: "其他看门狗",
+        8: "深度睡眠唤醒",
+        9: "掉电复位",
+        10: "SDIO复位",
+    }
+
     def __init__(self, data: bytes) -> None:
         self.chip_name: str = struct.unpack('<32s', data[0:32])[0].decode('utf-8').strip('\x00')
         self.chip_model: str = struct.unpack('<16s', data[32:48])[0].decode('utf-8').strip('\x00')
@@ -48,54 +63,137 @@ class DeviceInfo:
         self.cpu_freq_mhz: int = struct.unpack('<I', data[114:118])[0]
         self.temperature_celsius: float = struct.unpack('<f', data[118:122])[0]
         self.temp_sensor_supported: bool = bool(struct.unpack('<B', data[122:123])[0])
+        self.reset_reason: int = struct.unpack('<B', data[123:124])[0]
+        self.uptime_seconds: int = struct.unpack('<I', data[124:128])[0] if len(data) >= 128 else 0
+        self.cpu_cores: int = struct.unpack('<B', data[128:129])[0] if len(data) >= 129 else 0
+
+    def get_reset_reason_name(self) -> str:
+        return self.RESET_REASONS.get(self.reset_reason, f"未知({self.reset_reason})")
 
     def __str__(self) -> str:
-        result = f"芯片名称: {self.chip_name}\n芯片型号: {self.chip_model}\nFlash大小: {self.flash_size}\nMAC地址: {self.mac_address}\n版本: {self.version}\nCPU频率: {self.cpu_freq_mhz}MHz"
+        cpu_info = f"{self.cpu_freq_mhz}MHz"
+        if self.cpu_cores > 0:
+            cpu_info += f" ({self.cpu_cores}核)"
+        result = f"芯片名称: {self.chip_name}\n芯片型号: {self.chip_model}\nFlash大小: {self.flash_size}\nMAC地址: {self.mac_address}\n版本: {self.version}\nCPU频率: {cpu_info}"
         if self.temp_sensor_supported:
             result += f"\n温度: {self.temperature_celsius:.2f}°C"
         else:
             result += "\n温度: 不支持"
+        uptime = timedelta(seconds=self.uptime_seconds)
+        result += f"\n运行时间: {uptime}\n上次重启原因: {self.get_reset_reason_name()}"
         return result
 
 class MemoryInfo:
     def __init__(self, data: bytes) -> None:
-        self.heap_total: int = struct.unpack('<I', data[0:4])[0]
-        self.heap_free: int = struct.unpack('<I', data[4:8])[0]
-        self.heap_min_free: int = struct.unpack('<I', data[8:12])[0]
-        self.stack_high_watermark: int = struct.unpack('<I', data[12:16])[0]
-        if len(data) >= 28:
-            self.psram_total: int = struct.unpack('<I', data[16:20])[0]
-            self.psram_free: int = struct.unpack('<I', data[20:24])[0]
-            self.psram_min_free: int = struct.unpack('<I', data[24:28])[0]
-        else:
-            self.psram_total: int = 0
-            self.psram_free: int = 0
-            self.psram_min_free: int = 0
+        self.internal_total: int = struct.unpack('<I', data[0:4])[0]
+        self.internal_free: int = struct.unpack('<I', data[4:8])[0]
+        self.internal_min_free: int = struct.unpack('<I', data[8:12])[0]
+        self.internal_largest: int = struct.unpack('<I', data[12:16])[0]
+        self.psram_total: int = struct.unpack('<I', data[16:20])[0]
+        self.psram_free: int = struct.unpack('<I', data[20:24])[0]
+        self.psram_min_free: int = struct.unpack('<I', data[24:28])[0]
+        self.psram_largest: int = struct.unpack('<I', data[28:32])[0]
+        self.dma_free: int = struct.unpack('<I', data[32:36])[0]
+        self.total_free: int = struct.unpack('<I', data[36:40])[0]
+        self.task_count: int = struct.unpack('<H', data[40:42])[0]
+        self.stack_hwm: int = struct.unpack('<H', data[42:44])[0]
+        self._legacy = len(data) < 44
+
+    @staticmethod
+    def _fmt_kb(val: int) -> str:
+        if val >= 1024 * 1024:
+            return f"{val / (1024 * 1024):.1f} MB"
+        return f"{val / 1024:.1f} KB"
+
+    @staticmethod
+    def _pct(part: int, total: int) -> str:
+        if total <= 0:
+            return "N/A"
+        return f"{part * 100 / total:.1f}%"
 
     def __str__(self) -> str:
-        result = f"堆内存总量: {self.heap_total / 1024:.1f} KB\n堆内存可用: {self.heap_free / 1024:.1f} KB\n堆内存最小可用: {self.heap_min_free / 1024:.1f} KB\n栈高水位: {self.stack_high_watermark} bytes"
+        lines = []
+        lines.append(f"内部RAM: {self._fmt_kb(self.internal_free)}/{self._fmt_kb(self.internal_total)} "
+                      f"({self._pct(self.internal_free, self.internal_total)})  "
+                      f"最低:{self._fmt_kb(self.internal_min_free)}  最大块:{self._fmt_kb(self.internal_largest)}")
+
         if self.psram_total > 0:
-            result += f"\nPSRAM总量: {self.psram_total / 1024:.1f} KB\nPSRAM可用: {self.psram_free / 1024:.1f} KB\nPSRAM最小可用: {self.psram_min_free / 1024:.1f} KB"
-        return result
+            lines.append(f"PSRAM:   {self._fmt_kb(self.psram_free)}/{self._fmt_kb(self.psram_total)} "
+                          f"({self._pct(self.psram_free, self.psram_total)})  "
+                          f"最低:{self._fmt_kb(self.psram_min_free)}  最大块:{self._fmt_kb(self.psram_largest)}")
+
+        lines.append(f"其他:    DMA:{self._fmt_kb(self.dma_free)}  总可用:{self._fmt_kb(self.total_free)}  "
+                      f"任务:{self.task_count}个  BLE栈:{self._fmt_kb(self.stack_hwm)}")
+        return "\n".join(lines)
 
 class CPUInfo:
+
+    FEATURE_NAMES = {
+        0: "嵌入式Flash",
+        1: "2.4GHz WiFi",
+        4: "BLE",
+        5: "经典蓝牙",
+        6: "IEEE 802.15.4",
+    }
+
     def __init__(self, data: bytes) -> None:
         self.cpu_freq_mhz: int = struct.unpack('<I', data[0:4])[0]
-        self.cpu_usage: int = struct.unpack('<I', data[4:8])[0]
-        self.uptime_seconds: int = struct.unpack('<I', data[8:12])[0]
+        self.uptime_seconds: int = struct.unpack('<I', data[4:8])[0]
+        self.features: int = struct.unpack('<I', data[8:12])[0] if len(data) >= 12 else 0
+        self.task_count: int = struct.unpack('<H', data[12:14])[0] if len(data) >= 14 else 0
+        self.cpu_cores: int = struct.unpack('<B', data[14:15])[0] if len(data) >= 15 else 0
+        self.cpu_usage: int = struct.unpack('<B', data[15:16])[0] if len(data) >= 16 else 0
+        self.chip_revision: int = struct.unpack('<B', data[16:17])[0] if len(data) >= 17 else 0
+        self.idf_version: str = struct.unpack('<24s', data[17:41])[0].decode('utf-8').strip('\x00') if len(data) >= 41 else ""
+        self._legacy = len(data) < 41
+
+    def _get_feature_list(self) -> str:
+        feats = []
+        for bit, name in self.FEATURE_NAMES.items():
+            if self.features & (1 << bit):
+                feats.append(name)
+        return ", ".join(feats) if feats else "无"
 
     def __str__(self) -> str:
         uptime = timedelta(seconds=self.uptime_seconds)
-        return f"CPU频率: {self.cpu_freq_mhz}MHz\nCPU使用率: {self.cpu_usage}%\n运行时间: {uptime}"
+        if self._legacy:
+            return f"CPU频率: {self.cpu_freq_mhz}MHz\nCPU使用率: {self.cpu_usage}%\n运行时间: {uptime}"
+        cores_str = f" ({self.cpu_cores}核)" if self.cpu_cores > 0 else ""
+        lines = []
+        lines.append(f"CPU: {self.cpu_freq_mhz}MHz{cores_str} rev{self.chip_revision}  任务:{self.task_count}个  运行:{uptime}")
+        lines.append(f"功能: {self._get_feature_list()}")
+        if self.idf_version:
+            lines.append(f"ESP-IDF: {self.idf_version}")
+        return "\n".join(lines)
 
 class FlashInfo:
     def __init__(self, data: bytes) -> None:
         self.flash_total: int = struct.unpack('<I', data[0:4])[0]
         self.flash_free: int = struct.unpack('<I', data[4:8])[0]
         self.partition_count: int = struct.unpack('<B', data[8:9])[0]
+        self.flash_speed_mhz: int = struct.unpack('<B', data[9:10])[0] if len(data) >= 10 else 0
+        self.running_partition: str = struct.unpack('<16s', data[10:26])[0].decode('utf-8').strip('\x00') if len(data) >= 26 else ""
+        self._legacy = len(data) < 26
+
+    @staticmethod
+    def _fmt_mb(val: int) -> str:
+        return f"{val / (1024 * 1024):.1f} MB"
+
+    @staticmethod
+    def _pct(part: int, total: int) -> str:
+        if total <= 0:
+            return "N/A"
+        return f"{part * 100 / total:.1f}%"
 
     def __str__(self) -> str:
-        return f"Flash总量: {self.flash_total / (1024 * 1024):.1f} MB\nFlash可用: {self.flash_free / (1024 * 1024):.1f} MB\n分区数量: {self.partition_count}"
+        if self._legacy:
+            return f"Flash总量: {self._fmt_mb(self.flash_total)}\nFlash可用: {self._fmt_mb(self.flash_free)}\n分区数量: {self.partition_count}"
+        used = self.flash_total - self.flash_free
+        speed_str = f"{self.flash_speed_mhz}MHz" if self.flash_speed_mhz > 0 else "未知"
+        lines = []
+        lines.append(f"Flash: {self._fmt_mb(self.flash_total)}  已用:{self._fmt_mb(used)} ({self._pct(used, self.flash_total)})  空闲:{self._fmt_mb(self.flash_free)}")
+        lines.append(f"速度: {speed_str}  分区:{self.partition_count}个  当前分区:{self.running_partition or '未知'}")
+        return "\n".join(lines)
 
 class PartitionInfo:
     def __init__(self, data: bytes) -> None:
