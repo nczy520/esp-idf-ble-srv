@@ -39,7 +39,7 @@ class GuiComponents:
         self.device_list = left_panel_comp.device_list
         self.scan_loading = left_panel_comp.scan_loading
         self.scan_btn = left_panel_comp.scan_btn
-        self.scan_timeout_dropdown = left_panel_comp.scan_timeout_btn
+        self.scan_timeout_dropdown = left_panel_comp
 
         # 构建Tab组件
         info_tab_comp = InfoTabComponent(self.app)
@@ -61,7 +61,6 @@ class GuiComponents:
         self.color_box = led_tab_comp.color_box
         self.color_code_text = led_tab_comp.color_code_text
         self.effect_menu = led_tab_comp.effect_menu
-        self.effect_value = led_tab_comp
         self.speed_slider = led_tab_comp.speed_slider
         self.led_overlay = led_tab_comp.led_overlay
 

@@ -40,6 +40,9 @@ static void gatt_schedule_restart(uint32_t delay_ms)
 
 static const char *TAG = "BLE_SRV_GATT";
 
+#define GATT_RESTART_CMD_DELAY_MS    100
+#define GATT_RESTART_CHR_DELAY_MS    500
+
 static uint8_t s_partition_index = 0;
 static uint8_t s_write_buf[512];
 
@@ -403,7 +406,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             ESP_LOGI(TAG, "SRV command: 0x%02X", cmd);
             switch (cmd) {
             case BLE_SRV_CMD_RESTART:
-                gatt_schedule_restart(100);
+                gatt_schedule_restart(GATT_RESTART_CMD_DELAY_MS);
                 break;
             default:
                 break;
@@ -421,13 +424,18 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             if (om) {
                 ble_gatts_notify_custom(conn_handle, g_srv_restart_chr_val_handle, om);
             }
-            gatt_schedule_restart(500);
+            gatt_schedule_restart(GATT_RESTART_CHR_DELAY_MS);
         }
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED
         else if (attr_handle == g_wifi_config_chr_val_handle) {
-            if (data_len >= sizeof(ble_wifi_config_t)) {
-                const ble_wifi_config_t *wifi_cfg = (const ble_wifi_config_t *)s_write_buf;
-                ble_srv_wifi_connect(wifi_cfg->ssid, wifi_cfg->password);
+            if (data_len >= 1) {
+                ble_wifi_config_t wifi_cfg;
+                memset(&wifi_cfg, 0, sizeof(wifi_cfg));
+                size_t copy_len = (size_t)data_len < sizeof(wifi_cfg) ? (size_t)data_len : sizeof(wifi_cfg) - 1;
+                memcpy(&wifi_cfg, s_write_buf, copy_len);
+                wifi_cfg.ssid[sizeof(wifi_cfg.ssid) - 1] = '\0';
+                wifi_cfg.password[sizeof(wifi_cfg.password) - 1] = '\0';
+                ble_srv_wifi_connect(wifi_cfg.ssid, wifi_cfg.password);
             }
         } else if (attr_handle == g_wifi_ctrl_chr_val_handle) {
             ble_wifi_ctrl_cmd_t cmd = (ble_wifi_ctrl_cmd_t)s_write_buf[0];

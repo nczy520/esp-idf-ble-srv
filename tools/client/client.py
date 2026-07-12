@@ -46,6 +46,7 @@ from .constants import (
     BLE_OTA_URL_CMD_START_URL,
     BLE_OTA_URL_CMD_START_DEFAULT,
     BLE_OTA_URL_CMD_ABORT,
+    parse_esp_fw_version,
 )
 from .models import (
     DeviceInfo, MemoryInfo, CPUInfo, FlashInfo, PartitionInfo,
@@ -72,6 +73,7 @@ ERROR_NAMES = {
     OTAError.DISCONNECTED: "连接断开",
     OTAError.VERSION_DOWNGRADE: "远程固件版本更旧",
     OTAError.VERSION_SAME: "固件版本相同",
+    OTAError.CRC_MISMATCH: "固件CRC校验失败",
 }
 
 STATE_NAMES = {
@@ -128,9 +130,8 @@ class BLEDeviceClient:
             )
 
             if self._ota_ack_event and status.state == OTAState.RECEIVING:
-                if status.bytes_written > self._ota_ack_bytes:
-                    self._ota_ack_bytes = status.bytes_written
-                    self._ota_ack_event.set()
+                self._ota_ack_bytes = status.bytes_written
+                self._ota_ack_event.set()
 
             if is_terminal or status.state == OTAState.APPLY_OK:
                 self._ota_active = False
@@ -477,6 +478,8 @@ class BLEDeviceClient:
     async def ota_start(self, fw_size, fw_crc, chunk_size, fw_version):
         if not await self._start_ota_notify():
             return False
+        self._ota_ack_event = asyncio.Event()
+        self._ota_ack_bytes = 0
         cmd = struct.pack('<BIIHHI', BLE_OTA_BT_CMD_START, fw_size, fw_crc, chunk_size, 0, fw_version)
         print(f"  OTA启动: size={fw_size}, crc=0x{fw_crc:08X}, chunk={chunk_size}")
         if not await self._write_gatt(BLE_OTA_BT_CMD_CHAR_UUID, cmd, name="OTA启动"):
@@ -555,13 +558,19 @@ class BLEDeviceClient:
             fw_data = f.read()
         fw_size = len(fw_data)
         fw_crc = zlib.crc32(fw_data) & 0xFFFFFFFF
-        fw_version = 0x01000000
+        fw_version, fw_ver_str = parse_esp_fw_version(fw_data)
         mtu = self.client.mtu_size if self.client and hasattr(self.client, 'mtu_size') else 247
-        chunk_size = max(20, mtu - 3) if mtu - 3 >= 20 else 244
+        attr_overhead = 3
+        offset_header = 4
+        chunk_size = max(20, mtu - attr_overhead - offset_header)
+        window_packets = 12
+        window_bytes = window_packets * chunk_size
+        packet_interval = 0.003
         print(f"\n准备蓝牙OTA升级: {os.path.basename(fw_path)}")
         print(f"  固件大小: {fw_size} bytes ({fw_size/1024:.1f}KB)")
+        print(f"  固件版本: {fw_ver_str}")
         print(f"  固件CRC: 0x{fw_crc:08X}")
-        print(f"  MTU: {mtu}, 块大小: {chunk_size}")
+        print(f"  MTU: {mtu}, 块大小: {chunk_size}, 窗口: {window_packets}包")
 
         self._ota_active = True
         self._last_ota_state = None
@@ -572,20 +581,16 @@ class BLEDeviceClient:
             await self._stop_ota_notify()
             return False
 
-        self._ota_ack_event = asyncio.Event()
-        self._ota_ack_bytes = 0
         start_time = time.time()
         last_pct = -1
-        offset = 0
-        failures = 0
-        batch_count = 0
-        consecutive_timeouts = 0
-        packet_interval = 0.005
-        ack_timeout = 10.0
-        max_timeouts = 3
+        acked_offset = 0
+        sent_offset = 0
+        total_retries = 0
+        max_retries = 50
+        ack_timeout = 2.0
 
         try:
-            while offset < fw_size:
+            while acked_offset < fw_size:
                 if not self._ota_active:
                     if self.ota_status and self.ota_status.state in (
                         OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL,
@@ -600,58 +605,82 @@ class BLEDeviceClient:
                     print("\n  连接已断开")
                     return False
 
-                chunk = fw_data[offset:offset + chunk_size]
+                if self.ota_status and self.ota_status.state in (
+                        OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL,
+                        OTAState.APPLY_FAIL, OTAState.CHECK_FAIL):
+                    print(f"\n  OTA失败: {self._get_ota_error_msg()}")
+                    return False
 
-                if batch_count == 0:
-                    self._ota_ack_bytes = self.ota_status.bytes_written if (
-                        self.ota_status and self.ota_status.state == OTAState.RECEIVING
-                    ) else 0
-                    self._ota_ack_event.clear()
+                window_end = min(acked_offset + window_bytes, fw_size)
+                while sent_offset < window_end:
+                    chunk = fw_data[sent_offset:sent_offset + chunk_size]
+                    pkt = struct.pack('<I', sent_offset) + chunk
+                    ok = await self.ota_send_fw_data(pkt)
+                    if not ok:
+                        break
+                    sent_offset += len(chunk)
+                    await asyncio.sleep(packet_interval)
 
-                ok = await self.ota_send_fw_data(chunk)
-                if ok:
-                    offset += len(chunk)
-                    batch_count += 1
-                    failures = 0
-                    if batch_count >= 10:
-                        batch_count = 0
-                        try:
-                            await asyncio.wait_for(self._ota_ack_event.wait(), timeout=ack_timeout)
-                            consecutive_timeouts = 0
-                        except asyncio.TimeoutError:
-                            consecutive_timeouts += 1
-                            print(f"\n  等待ACK超时 ({consecutive_timeouts}/{max_timeouts}), offset={offset}")
-                            if consecutive_timeouts >= max_timeouts:
-                                print("  连续ACK超时次数过多，传输失败")
-                                await self.ota_abort()
-                                return False
-                            if not self.client.is_connected:
-                                print("  连接已断开")
-                                return False
-                            if self.ota_status and self.ota_status.state in (
-                                OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL
-                            ):
-                                print(f"  设备错误: {self._get_ota_error_msg()}")
-                                return False
-                            await asyncio.sleep(0.1)
-                    else:
-                        await asyncio.sleep(packet_interval)
-                else:
-                    failures += 1
-                    if failures >= 10:
-                        if not self.client.is_connected:
-                            print("\n  连接已断开")
+                if sent_offset >= fw_size and self._ota_ack_bytes >= fw_size:
+                    break
+
+                if sent_offset >= fw_size or sent_offset >= acked_offset + window_bytes:
+                    self._ota_ack_event = asyncio.Event()
+                    try:
+                        await asyncio.wait_for(self._ota_ack_event.wait(), timeout=ack_timeout)
+                    except asyncio.TimeoutError:
+                        total_retries += 1
+                        if total_retries > max_retries:
+                            print(f"\n  等待ACK超时次数过多({max_retries}次)，传输失败")
+                            await self.ota_abort()
                             return False
-                        failures = 0
-                    await asyncio.sleep(0.05)
+                        if total_retries <= 3 or total_retries % 10 == 0:
+                            print(f"\n  等待ACK超时，从offset={acked_offset}重传 (retry={total_retries})")
+                        sent_offset = acked_offset
+                        await asyncio.sleep(0.05)
+                        continue
 
-                if self.ota_status and self.ota_status.state == OTAState.RECEIVING and self.ota_status.bytes_written > 0:
-                    pct = int(self.ota_status.bytes_written * 100 / fw_size)
-                    if pct != last_pct:
-                        self._print_progress(self.ota_status.bytes_written, fw_size, start_time, "写入")
-                        last_pct = pct
+                    dev_received = self._ota_ack_bytes
+                    if dev_received > acked_offset:
+                        acked_offset = dev_received
+                        sent_offset = max(sent_offset, acked_offset)
+                        total_retries = 0
+                    elif dev_received < acked_offset:
+                        acked_offset = dev_received
+                        sent_offset = dev_received
+                        total_retries += 1
+                    else:
+                        sent_offset = acked_offset
+                        total_retries += 1
+                        if total_retries > max_retries:
+                            print(f"\n  重传次数过多({max_retries}次)，传输失败")
+                            await self.ota_abort()
+                            return False
+
+                pct = int(acked_offset * 100 / fw_size)
+                if pct != last_pct:
+                    self._print_progress(acked_offset, fw_size, start_time, "写入")
+                    last_pct = pct
 
             print()
+            print("  固件数据发送完毕，等待设备确认全部数据...")
+            wait_ok = False
+            for _ in range(100):
+                await asyncio.sleep(0.05)
+                if not self.client or not self.client.is_connected or not self._ota_active:
+                    break
+                if self.ota_status and self.ota_status.bytes_written >= fw_size:
+                    wait_ok = True
+                    break
+                if self.ota_status and self.ota_status.state in (
+                        OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL,
+                        OTAState.APPLY_FAIL, OTAState.CHECK_FAIL):
+                    break
+            if not wait_ok and self.ota_status:
+                print(f"  等待接收确认超时，设备已接收 {self.ota_status.bytes_written}/{fw_size} bytes")
+            else:
+                print("  设备已确认接收全部数据")
+            await asyncio.sleep(0.2)
 
             if not await self.ota_verify():
                 await self.ota_abort()
@@ -661,8 +690,13 @@ class BLEDeviceClient:
         except (BleakError, OSError) as e:
             msg = str(e).lower()
             if any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset", "abort"]):
-                print("\n  设备已断开（OTA可能已完成，设备正在重启）")
-                return True
+                ota_ok = (self.ota_status and self.ota_status.state
+                          in (OTAState.APPLY_OK, OTAState.APPLYING, OTAState.VERIFY_OK))
+                if ota_ok:
+                    print("\n  设备已断开（OTA可能已完成，设备正在重启）")
+                    return True
+                print("\n  连接已断开，OTA失败")
+                return False
             print(f"\n  OTA传输失败: {e}")
             await self.ota_abort()
             return False
@@ -746,8 +780,13 @@ class BLEDeviceClient:
         except (BleakError, OSError) as e:
             msg = str(e).lower()
             if any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset"]):
-                print("\n  设备已断开（可能正在重启）")
-                return True
+                ota_ok = (self.ota_status and self.ota_status.state
+                          in (OTAState.APPLY_OK, OTAState.APPLYING, OTAState.VERIFY_OK))
+                if ota_ok:
+                    print("\n  设备已断开（OTA可能已完成，设备正在重启）")
+                    return True
+                print("\n  连接已断开，URL OTA失败")
+                return False
             print(f"\n  URL OTA失败: {e}")
             return False
         finally:

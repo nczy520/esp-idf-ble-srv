@@ -36,6 +36,7 @@ class OTAError:
     DISCONNECTED = 0x0A
     VERSION_DOWNGRADE = 0x0B
     VERSION_SAME = 0x0C
+    CRC_MISMATCH = 0x0D
 
 class DeviceInfo:
     def __init__(self, data: bytes) -> None:
@@ -158,7 +159,8 @@ class OTAStatus:
             OTAError.ABORTED: "用户中止",
             OTAError.DISCONNECTED: "连接断开",
             OTAError.VERSION_DOWNGRADE: "远程版本更旧",
-            OTAError.VERSION_SAME: "版本相同"
+            OTAError.VERSION_SAME: "版本相同",
+            OTAError.CRC_MISMATCH: "固件CRC校验失败"
         }
         return f"状态: {state_names.get(self.state, f'未知({self.state})')}\n错误: {error_names.get(self.error_code, f'未知({self.error_code})')}\n固件大小: {self.fw_size} bytes\n已写入: {self.bytes_written} bytes\n进度: {self.progress}%"
 

@@ -30,6 +30,17 @@ static const char *TAG = "BLE_SRV_LED";
 #define WS2812_T1L_TICKS        3
 #define WS2812_RESET_TICKS      2800
 
+#define LED_TASK_STACK          4096
+#define LED_TASK_PRIO           5
+#define LED_TX_WAIT_MS          100
+#define LED_EFFECT_TICK_MS      20
+#define LED_STROBE_ON_MS        10
+#define LED_LOCK_RETRY_MS       10
+#define LED_DEINIT_WAIT_MS      200
+#define LED_SEND_OFF_DELAY_MS   20
+#define LED_STOP_EFFECT_WAIT_MS 100
+#define LED_DEFAULT_SPEED       50
+
 #define LED_EFFECT_NOTIFY_STOP     (1 << 0)
 #define LED_EFFECT_NOTIFY_RESTART  (1 << 1)
 
@@ -88,7 +99,7 @@ static void ble_srv_led_send_pixel(uint8_t red, uint8_t green, uint8_t blue)
     };
 
     rmt_transmit(s_led_chan, s_copy_encoder, symbols, sizeof(symbols), &tx_config);
-    rmt_tx_wait_all_done(s_led_chan, pdMS_TO_TICKS(100));
+    rmt_tx_wait_all_done(s_led_chan, pdMS_TO_TICKS(LED_TX_WAIT_MS));
 }
 
 static void effect_breath(uint8_t r, uint8_t g, uint8_t b, uint8_t speed)
@@ -98,7 +109,7 @@ static void effect_breath(uint8_t r, uint8_t g, uint8_t b, uint8_t speed)
     int direction = 1;
 
     while (1) {
-        uint32_t notify = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+        uint32_t notify = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LED_EFFECT_TICK_MS));
         if (notify & (LED_EFFECT_NOTIFY_STOP | LED_EFFECT_NOTIFY_RESTART)) {
             return;
         }
@@ -144,7 +155,7 @@ static void effect_rainbow(uint8_t speed)
     float step = (float)speed / 50.0f;
 
     while (1) {
-        uint32_t notify = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+        uint32_t notify = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LED_EFFECT_TICK_MS));
         if (notify & (LED_EFFECT_NOTIFY_STOP | LED_EFFECT_NOTIFY_RESTART)) {
             return;
         }
@@ -173,7 +184,7 @@ static void effect_strobe(uint8_t r, uint8_t g, uint8_t b, uint8_t speed)
 
     while (1) {
         ble_srv_led_send_pixel(r, g, b);
-        uint32_t notify = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
+        uint32_t notify = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LED_STROBE_ON_MS));
         if (notify & (LED_EFFECT_NOTIFY_STOP | LED_EFFECT_NOTIFY_RESTART)) {
             return;
         }
@@ -190,7 +201,7 @@ static void ble_srv_led_effect_task(void *arg)
 {
     (void)arg;
     TaskHandle_t self_handle = xTaskGetCurrentTaskHandle();
-    uint8_t r = 0, g = 0, b = 0, speed = 50;
+    uint8_t r = 0, g = 0, b = 0, speed = LED_DEFAULT_SPEED;
     ble_led_effect_t effect = BLE_LED_EFFECT_NONE;
     ble_led_effect_t last_effect = BLE_LED_EFFECT_NONE;
 
@@ -207,7 +218,7 @@ static void ble_srv_led_effect_task(void *arg)
             effect = s_effect;
             xSemaphoreGive(s_lock);
         } else {
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(LED_LOCK_RETRY_MS));
             continue;
         }
 
@@ -245,7 +256,7 @@ static void ble_srv_led_start_effect(void)
         return;
     }
 
-    BaseType_t ret = xTaskCreate(ble_srv_led_effect_task, "led_eff", 4096, NULL, 5, &s_effect_task);
+    BaseType_t ret = xTaskCreate(ble_srv_led_effect_task, "led_eff", LED_TASK_STACK, NULL, LED_TASK_PRIO, &s_effect_task);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create effect task");
         s_effect_task = NULL;
@@ -346,7 +357,12 @@ void ble_srv_led_deinit(void)
         return;
     }
 
-    ble_srv_led_stop_effect(200);
+    s_initialized = false;
+
+    ble_srv_led_stop_effect(LED_DEINIT_WAIT_MS);
+
+    vTaskDelay(pdMS_TO_TICKS(LED_SEND_OFF_DELAY_MS));
+
     ble_srv_led_send_pixel(0, 0, 0);
 
     if (s_copy_encoder) {
@@ -365,7 +381,6 @@ void ble_srv_led_deinit(void)
         s_lock = NULL;
     }
 
-    s_initialized = false;
     ESP_LOGI(TAG, "LED deinitialized");
 }
 
@@ -393,7 +408,7 @@ bool ble_srv_led_set_on(bool on)
         }
     } else {
         xSemaphoreGive(s_lock);
-        ble_srv_led_stop_effect(100);
+        ble_srv_led_stop_effect(LED_STOP_EFFECT_WAIT_MS);
         ble_srv_led_send_pixel(0, 0, 0);
     }
 
@@ -475,10 +490,10 @@ bool ble_srv_led_set_effect(ble_led_effect_t effect, uint8_t speed)
             xTaskNotify(s_effect_task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
         }
     } else if (led_on) {
-        ble_srv_led_stop_effect(100);
+        ble_srv_led_stop_effect(LED_STOP_EFFECT_WAIT_MS);
         ble_srv_led_send_pixel(r, g, b);
     } else {
-        ble_srv_led_stop_effect(100);
+        ble_srv_led_stop_effect(LED_STOP_EFFECT_WAIT_MS);
     }
 
     ESP_LOGI(TAG, "LED effect set: %d, speed=%d", effect, speed);

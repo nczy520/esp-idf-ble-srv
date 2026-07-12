@@ -22,8 +22,13 @@ static const char *TAG = "OTA_URL";
 #define HTTP_TIMEOUT_MS       10000
 #define HTTP_BUFFER_SIZE      4096
 #define LOOP_TICK_MS          50
+#define HTTP_READ_STALL_COUNT 50
+#define HTTP_READ_TICK_MS     20
+#define URL_DEINIT_WAIT_MS    1000
+#define URL_DEINIT_POLL_MS    10
+#define HTTP_RANGE_BYTES      4095
 
-static TaskHandle_t s_url_task = NULL;
+static volatile TaskHandle_t s_url_task = NULL;
 static char s_ota_url[BLE_OTA_URL_MAX_URL_LEN + 1] = {0};
 static bool s_initialized = false;
 
@@ -163,7 +168,9 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
         return VERSION_CHECK_SKIP;
     }
 
-    esp_http_client_set_header(client, "Range", "bytes=0-4095");
+    char range_header[32];
+    snprintf(range_header, sizeof(range_header), "bytes=0-%u", HTTP_RANGE_BYTES);
+    esp_http_client_set_header(client, "Range", range_header);
 
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
@@ -227,11 +234,11 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
         }
         if (r == 0) {
             zero_read_count++;
-            if (zero_read_count >= 50) {
+            if (zero_read_count >= HTTP_READ_STALL_COUNT) {
                 ESP_LOGW(TAG, "HTTP read stalled after %d bytes", total);
                 break;
             }
-            vTaskDelay(pdMS_TO_TICKS(20));
+            vTaskDelay(pdMS_TO_TICKS(HTTP_READ_TICK_MS));
             continue;
         }
         zero_read_count = 0;
@@ -451,8 +458,9 @@ void ble_srv_ota_url_deinit(void)
         xTaskNotifyGive(task);
         s_url_task = NULL;
         int wait = 0;
-        while (eTaskGetState(task) != eDeleted && wait < 100) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        int max_wait_ticks = URL_DEINIT_WAIT_MS / URL_DEINIT_POLL_MS;
+        while (eTaskGetState(task) != eDeleted && wait < max_wait_ticks) {
+            vTaskDelay(pdMS_TO_TICKS(URL_DEINIT_POLL_MS));
             wait++;
         }
         if (eTaskGetState(task) != eDeleted) {
@@ -489,15 +497,17 @@ bool ble_srv_ota_url_start(const char *url)
     strncpy(s_ota_url, url, sizeof(s_ota_url) - 1);
     s_ota_url[sizeof(s_ota_url) - 1] = '\0';
 
+    TaskHandle_t task_handle = NULL;
     BaseType_t ok = xTaskCreate(url_task, "ota_url", OTA_URL_TASK_STACK,
                                  (void *)(uintptr_t)gen,
-                                 OTA_URL_TASK_PRIO, &s_url_task);
+                                 OTA_URL_TASK_PRIO, &task_handle);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "Failed to create URL OTA task");
         s_url_task = NULL;
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return false;
     }
+    s_url_task = task_handle;
 
     ESP_LOGI(TAG, "URL OTA started: %s, gen=%u", url, gen);
     return true;

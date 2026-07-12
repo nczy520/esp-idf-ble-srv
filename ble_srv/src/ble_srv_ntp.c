@@ -9,6 +9,11 @@
 
 static const char *TAG = "BLE_SRV_NTP";
 
+#define NTP_MAX_RETRIES           10
+#define NTP_RETRY_INTERVAL_MS     1000
+#define NTP_DEINIT_WAIT_MS        2000
+#define NTP_POLL_INTERVAL_MS      20
+
 #ifdef CONFIG_BLE_SRV_NTP_ENABLED
 static const char *ntp_servers[] = {
     CONFIG_BLE_SRV_NTP_SERVER_1,
@@ -64,7 +69,7 @@ static void ntp_sync_task(void *arg)
     ESP_LOGI(TAG, "Timezone set to: %s", CONFIG_BLE_SRV_NTP_TIMEZONE);
 
     int retry = 0;
-    const int max_retry = 10;
+    const int max_retry = NTP_MAX_RETRIES;
     bool success = false;
     while (retry < max_retry && !s_ntp_stop) {
         time_t now = time(NULL);
@@ -74,7 +79,7 @@ static void ntp_sync_task(void *arg)
             break;
         }
         ESP_LOGI(TAG, "Waiting for NTP sync... (%d/%d)", retry + 1, max_retry);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(NTP_RETRY_INTERVAL_MS));
         retry++;
     }
 
@@ -127,9 +132,9 @@ void ble_srv_ntp_deinit(void)
     s_ntp_stop = true;
 
     uint32_t waited = 0;
-    while (s_ntp_task && waited < 2000) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-        waited += 20;
+    while (s_ntp_task && waited < NTP_DEINIT_WAIT_MS) {
+        vTaskDelay(pdMS_TO_TICKS(NTP_POLL_INTERVAL_MS));
+        waited += NTP_POLL_INTERVAL_MS;
     }
 
     if (esp_sntp_enabled()) {

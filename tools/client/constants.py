@@ -64,3 +64,44 @@ BLE_LED_EFFECT_BREATH = 0x01
 BLE_LED_EFFECT_BLINK = 0x02
 BLE_LED_EFFECT_RAINBOW = 0x03
 BLE_LED_EFFECT_STROBE = 0x04
+
+ESP_APP_DESC_MAGIC = b'\x32\x54\xCD\xAB'
+
+def parse_esp_fw_version(fw_data: bytes) -> tuple:
+    """
+    从ESP32固件镜像中解析版本号
+    返回: (version_uint32, version_str)，如果解析失败返回默认值(0x00010000, "v1.0.0")
+    version_uint32编码: (major << 16) | (minor << 8) | patch
+    """
+    default_ver = 0x00010000
+    default_str = "v1.0.0"
+
+    try:
+        search_end = min(len(fw_data), 0x2000)
+        magic_pos = fw_data.find(ESP_APP_DESC_MAGIC, 0, search_end)
+        if magic_pos < 0:
+            return default_ver, default_str
+
+        ver_offset = magic_pos + 4 + 4 + 8
+        if ver_offset + 32 > len(fw_data):
+            return default_ver, default_str
+
+        ver_bytes = fw_data[ver_offset:ver_offset + 32]
+        null_pos = ver_bytes.find(b'\x00')
+        if null_pos >= 0:
+            ver_bytes = ver_bytes[:null_pos]
+        ver_str = ver_bytes.decode('ascii', errors='ignore').strip()
+        if not ver_str:
+            return default_ver, default_str
+
+        clean = ver_str.lstrip('vV ')
+        parts = clean.split('.')
+        major = min(255, int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 1)
+        minor = min(255, int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0)
+        patch = min(255, int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0)
+
+        ver_uint = (major << 16) | (minor << 8) | patch
+        ver_out = f"v{major}.{minor}.{patch}"
+        return ver_uint, ver_out
+    except Exception:
+        return default_ver, default_str

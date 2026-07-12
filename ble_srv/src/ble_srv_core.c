@@ -239,16 +239,40 @@ bool ble_srv_init(void)
 
     nimble_port_freertos_init(ble_srv_host_task);
 
-    ble_srv_ota_init();
+    if (!ble_srv_ota_init()) {
+        ESP_LOGE(TAG, "Failed to initialize OTA common");
+        nimble_port_stop();
+        nimble_port_deinit();
+        return false;
+    }
 
-    ble_srv_ota_bt_init();
-    ble_srv_ota_url_init();
+    if (!ble_srv_ota_bt_init()) {
+        ESP_LOGE(TAG, "Failed to initialize BT OTA");
+        ble_srv_ota_deinit();
+        nimble_port_stop();
+        nimble_port_deinit();
+        return false;
+    }
+
+    if (!ble_srv_ota_url_init()) {
+        ESP_LOGW(TAG, "URL OTA init failed (non-critical)");
+    }
 
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
-    ble_srv_led_init();
+    if (!ble_srv_led_init()) {
+        ESP_LOGE(TAG, "Failed to initialize LED");
+        ble_srv_ota_url_deinit();
+        ble_srv_ota_bt_deinit();
+        ble_srv_ota_deinit();
+        nimble_port_stop();
+        nimble_port_deinit();
+        return false;
+    }
 #endif
 
-    ble_srv_temp_sensor_init();
+    if (!ble_srv_temp_sensor_init()) {
+        ESP_LOGW(TAG, "Temperature sensor init failed (non-critical)");
+    }
 
     ESP_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);
     return true;
@@ -259,7 +283,7 @@ void ble_srv_deinit(void)
     ESP_LOGI(TAG, "Deinitializing BLE Service");
 
     ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
-    vTaskDelay(pdMS_TO_TICKS(300));
+    vTaskDelay(pdMS_TO_TICKS(BLE_OTA_DEINIT_WAIT_MS));
 
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
     ble_srv_led_deinit();
