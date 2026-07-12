@@ -13,8 +13,6 @@
 
 static const char *TAG = "OTA";
 
-#define RESET_TIMER_MS 300
-
 static SemaphoreHandle_t s_lock = NULL;
 static TimerHandle_t s_reset_timer = NULL;
 
@@ -129,7 +127,7 @@ bool ble_srv_ota_init(void)
         return false;
     }
 
-    s_reset_timer = xTimerCreate("ota_reset", pdMS_TO_TICKS(RESET_TIMER_MS),
+    s_reset_timer = xTimerCreate("ota_reset", pdMS_TO_TICKS(BLE_OTA_RESET_DELAY_MS),
                                   pdFALSE, NULL, reset_timer_cb);
     if (!s_reset_timer) {
         ESP_LOGE(TAG, "Failed to create reset timer");
@@ -138,7 +136,7 @@ bool ble_srv_ota_init(void)
         return false;
     }
 
-    s_ota_restart_timer = xTimerCreate("ota_rboot", pdMS_TO_TICKS(3000),
+    s_ota_restart_timer = xTimerCreate("ota_rboot", pdMS_TO_TICKS(BLE_OTA_RESTART_DELAY_MS),
                                         pdFALSE, NULL, ota_restart_timer_cb);
     if (!s_ota_restart_timer) {
         ESP_LOGE(TAG, "Failed to create restart timer");
@@ -184,7 +182,7 @@ void ble_srv_ota_deinit(void)
         ble_srv_ota_url_handle_abort();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(300));
+    vTaskDelay(pdMS_TO_TICKS(BLE_OTA_DEINIT_WAIT_MS));
 
     if (s_reset_timer) {
         xTimerDelete(s_reset_timer, portMAX_DELAY);

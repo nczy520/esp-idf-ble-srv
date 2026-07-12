@@ -14,6 +14,11 @@ extern "C" {
 #define BLE_OTA_MAX_FW_SIZE           (4 * 1024 * 1024)
 #define BLE_OTA_INVALID_GEN           0
 
+#define BLE_OTA_RESET_DELAY_MS        300
+#define BLE_OTA_RESTART_DELAY_MS      3000
+#define BLE_OTA_DEINIT_WAIT_MS        300
+#define BLE_RESTART_DELAY_MS          100
+
 typedef enum {
     BLE_OTA_STATE_IDLE = 0x00,
     BLE_OTA_STATE_CHECKING,

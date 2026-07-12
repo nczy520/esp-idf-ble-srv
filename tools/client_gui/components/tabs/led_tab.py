@@ -15,7 +15,12 @@ class LEDTabComponent(BaseTabComponent):
         self.r_slider = None
         self.g_slider = None
         self.b_slider = None
+        self.r_val_text = None
+        self.g_val_text = None
+        self.b_val_text = None
         self.color_box = None
+        self.color_code_text = None
+        self.color_preview_col = None
         self.effect_menu = None
         self.effect_menu_text = None
         self.effect_value = "无"
@@ -37,17 +42,24 @@ class LEDTabComponent(BaseTabComponent):
     def build(self):
         """构建LED控制Tab"""
         self.led_status_text = ft.Text("状态: 未知", size=13, color=ft.Colors.ON_SURFACE_VARIANT, weight=ft.FontWeight.W_500)
-        # 加长颜色进度条
-        self.r_slider = ft.Slider(min=0, max=255, value=255, label="{value}", width=220, on_change=self._on_color_changed)
-        self.g_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=220, on_change=self._on_color_changed)
-        self.b_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=220, on_change=self._on_color_changed)
+        self.r_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=170, on_change=self._on_color_changed)
+        self.g_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=170, on_change=self._on_color_changed)
+        self.b_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=170, on_change=self._on_color_changed)
+        self.r_val_text = ft.Text("00", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.RED, width=28, text_align=ft.TextAlign.RIGHT, font_family="monospace")
+        self.g_val_text = ft.Text("00", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.GREEN, width=28, text_align=ft.TextAlign.RIGHT, font_family="monospace")
+        self.b_val_text = ft.Text("00", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE, width=28, text_align=ft.TextAlign.RIGHT, font_family="monospace")
         self.color_box = ft.Container(
-            width=40,
-            height=40,
-            bgcolor="#ff0000",
+            width=44,
+            height=44,
+            bgcolor="#000000",
             border_radius=6,
             border=ft.border.BorderSide(2, ft.Colors.OUTLINE_VARIANT),
             shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, "black"), offset=ft.Offset(0, 1)),
+        )
+        self.color_code_text = ft.Text("#000000", size=10, weight=ft.FontWeight.W_500, color=ft.Colors.ON_SURFACE_VARIANT, text_align=ft.TextAlign.CENTER, font_family="monospace", width=48)
+        self.color_preview_col = ft.Container(
+            content=ft.Column([self.color_box, self.color_code_text], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            margin=ft.margin.Margin(24, 0, 0, 0),
         )
         # 特效选择菜单（类似左侧时间选择菜单）
         effect_items = [
@@ -100,22 +112,22 @@ class LEDTabComponent(BaseTabComponent):
                         # 左侧：颜色设置
                         ft.Column([
                             ft.Text("颜色", size=12, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE),
-                            # R滑块 + 颜色预览
                             ft.Row([
                                 ft.Text("R", width=16, weight=ft.FontWeight.BOLD, color=ft.Colors.RED, size=11),
                                 self.r_slider,
-                                self.color_box,
+                                self.r_val_text,
+                                self.color_preview_col,
                             ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                            # G滑块
                             ft.Row([
                                 ft.Text("G", width=16, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN, size=11),
                                 self.g_slider,
-                            ], spacing=4),
-                            # B滑块
+                                self.g_val_text,
+                            ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                             ft.Row([
                                 ft.Text("B", width=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE, size=11),
                                 self.b_slider,
-                            ], spacing=4),
+                                self.b_val_text,
+                            ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                             self.led_set_color_btn,
                         ], spacing=2, expand=3),
                         # 右侧：特效设置

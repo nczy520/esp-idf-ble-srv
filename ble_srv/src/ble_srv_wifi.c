@@ -75,7 +75,12 @@ bool ble_srv_wifi_provisioner_init(void)
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_LOGW(TAG, "NVS version mismatch, erasing NVS");
+        esp_err_t erase_ret = nvs_flash_erase();
+        if (erase_ret != ESP_OK) {
+            ESP_LOGE(TAG, "NVS erase failed: %s", esp_err_to_name(erase_ret));
+            return false;
+        }
         ret = nvs_flash_init();
     }
     if (ret != ESP_OK) {

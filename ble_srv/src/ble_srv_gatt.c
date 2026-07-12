@@ -481,3 +481,12 @@ const struct ble_gatt_svc_def *ble_srv_get_gatt_svcs(void)
 {
     return s_gatt_svcs;
 }
+
+void ble_srv_gatt_deinit(void)
+{
+    if (s_gatt_restart_timer) {
+        xTimerStop(s_gatt_restart_timer, 0);
+        xTimerDelete(s_gatt_restart_timer, portMAX_DELAY);
+        s_gatt_restart_timer = NULL;
+    }
+}

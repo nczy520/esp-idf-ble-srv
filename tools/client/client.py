@@ -8,6 +8,7 @@ import struct
 import zlib
 import os
 import time
+from typing import Optional, List, Tuple, Any
 
 try:
     from bleak import BleakClient, BleakScanner, BleakError
@@ -96,6 +97,7 @@ class BLEDeviceClient:
         self.device_name = device_name
         self.address = address
         self.client = None
+        self.is_connected = False
         self.ota_status = None
         self._ota_active = False
         self._ota_ack_event = None
@@ -103,6 +105,7 @@ class BLEDeviceClient:
         self._ota_notify_started = False
         self._last_ota_state = None
         self._connect_gen = 0
+        self._disconnect_event = None
 
     def _ota_status_handler(self, sender, data):
         try:
@@ -218,7 +221,9 @@ class BLEDeviceClient:
             await asyncio.sleep(0.3)
         self._connect_gen += 1
         gen = self._connect_gen
+        self._disconnect_event = asyncio.Event()
         self.address = device.address
+        self.device_name = device.name
         print(f"\n连接设备: {device.name} ({device.address})")
         try:
             def on_disconnect(c, g=gen):
@@ -227,38 +232,58 @@ class BLEDeviceClient:
                 self._on_disconnect(c)
             self.client = BleakClient(device, timeout=15, use_cached=False, disconnected_callback=on_disconnect)
             await self.client.connect()
+            self.is_connected = True
             mtu = self.client.mtu_size if hasattr(self.client, 'mtu_size') else 247
             print(f"连接成功 (MTU={mtu})")
             return True
         except BleakError as e:
             print(f"连接失败: {e}")
+            self.is_connected = False
             if self._connect_gen == gen:
                 self.client = None
             return False
 
     def _on_disconnect(self, client):
+        self.is_connected = False
         self._ota_notify_started = False
         self._ota_active = False
         if self._ota_ack_event:
             self._ota_ack_event.set()
+        if self._disconnect_event:
+            self._disconnect_event.set()
         print("\n设备已断开连接")
 
     async def disconnect(self):
-        if self._ota_notify_started and self.client and self.client.is_connected:
+        if self._ota_notify_started and self.client:
             try:
                 await self.client.stop_notify(BLE_OTA_STATUS_CHAR_UUID)
             except Exception:
                 pass
         self._ota_notify_started = False
+        self._ota_active = False
+        if self._ota_ack_event:
+            self._ota_ack_event.set()
         old_client = self.client
+        disc_event = self._disconnect_event
         if old_client:
-            self._connect_gen += 1
             self.client = None
+            self._connect_gen += 1
             try:
                 await old_client.disconnect()
             except Exception:
                 pass
-            await asyncio.sleep(0.3)
+            if disc_event and self.is_connected:
+                try:
+                    await asyncio.wait_for(disc_event.wait(), timeout=2.0)
+                except Exception:
+                    pass
+            try:
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+        self.is_connected = False
+        self.address = None
+        self.device_name = None
         print("已断开连接")
 
     async def _read_gatt(self, uuid, name="特征值"):
@@ -372,7 +397,7 @@ class BLEDeviceClient:
         except ValueError:
             print("颜色格式错误，请使用AABBCC格式（如FF0000=红色）")
             return False
-        if await self._write_gatt(BLE_LED_COLOR_CHAR_UUID, bytes([g, r, b]), name="LED颜色"):
+        if await self._write_gatt(BLE_LED_COLOR_CHAR_UUID, bytes([r, g, b]), name="LED颜色"):
             print(f"LED颜色已设置: #{color_hex.upper()}")
             return True
         return False

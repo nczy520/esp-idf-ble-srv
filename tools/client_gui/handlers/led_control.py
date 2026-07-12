@@ -14,10 +14,14 @@ class LEDControlHandler(BaseHandler):
     def _reset_led_ui_on_disconnect(self):
         """断开连接时重置LED UI状态"""
         self.ui.led_status_text.value = "状态: 未连接"
-        self.ui.color_box.bgcolor = ft.Colors.GREY_300
-        self.ui.r_slider.value = 255
-        self.ui.g_slider.value = 255
-        self.ui.b_slider.value = 255
+        self.ui.color_box.bgcolor = "#000000"
+        self.ui.color_code_text.value = "#000000"
+        self.ui.r_slider.value = 0
+        self.ui.g_slider.value = 0
+        self.ui.b_slider.value = 0
+        self.ui.r_val_text.value = "00"
+        self.ui.g_val_text.value = "00"
+        self.ui.b_val_text.value = "00"
         self.safe_update()
 
     def color_changed(self, event=None):
@@ -26,7 +30,12 @@ class LEDControlHandler(BaseHandler):
             r = int(self.ui.r_slider.value)
             g = int(self.ui.g_slider.value)
             b = int(self.ui.b_slider.value)
-            self.ui.color_box.bgcolor = f"#{r:02x}{g:02x}{b:02x}"
+            hex_code = f"#{r:02x}{g:02x}{b:02x}"
+            self.ui.color_box.bgcolor = hex_code
+            self.ui.color_code_text.value = hex_code.upper()
+            self.ui.r_val_text.value = f"{r:02X}"
+            self.ui.g_val_text.value = f"{g:02X}"
+            self.ui.b_val_text.value = f"{b:02X}"
             self.safe_update()
         except Exception:
             pass

@@ -104,12 +104,14 @@ bool ble_srv_ntp_sync(void)
     }
 
     s_ntp_stop = false;
-    BaseType_t ret = xTaskCreate(ntp_sync_task, "ntp_sync", 4096, NULL, 2, (TaskHandle_t *)&s_ntp_task);
+    TaskHandle_t task_handle = NULL;
+    BaseType_t ret = xTaskCreate(ntp_sync_task, "ntp_sync", 4096, NULL, 2, &task_handle);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create NTP sync task");
         s_ntp_task = NULL;
         return false;
     }
+    s_ntp_task = task_handle;
 
     ESP_LOGI(TAG, "NTP sync task started");
     return true;

@@ -28,8 +28,8 @@ static const char *TAG = "BLE_SRV";
 #define BLE_SRV_ADV_INTERVAL_MIN    (CONFIG_BLE_SRV_ADV_INTERVAL_MIN * 1000 / 625)
 #define BLE_SRV_ADV_INTERVAL_MAX    (CONFIG_BLE_SRV_ADV_INTERVAL_MAX * 1000 / 625)
 
-static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-static bool s_advertising = false;
+static volatile uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static volatile bool s_advertising = false;
 static uint8_t s_own_addr_type = 0;
 
 static char s_device_name[64] = {0};
@@ -270,6 +270,9 @@ void ble_srv_deinit(void)
     ble_srv_ota_url_deinit();
     ble_srv_ota_bt_deinit();
     ble_srv_ota_deinit();
+
+    ble_srv_gatt_deinit();
+    ble_srv_device_deinit();
 
     nimble_port_stop();
     nimble_port_deinit();

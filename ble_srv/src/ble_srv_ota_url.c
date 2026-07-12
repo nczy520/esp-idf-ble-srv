@@ -25,6 +25,7 @@ static const char *TAG = "OTA_URL";
 
 static TaskHandle_t s_url_task = NULL;
 static char s_ota_url[BLE_OTA_URL_MAX_URL_LEN + 1] = {0};
+static bool s_initialized = false;
 
 #define FW_VER_MAX_SEGS 4
 #define FW_VER_SEG_MAX  65535u
@@ -208,7 +209,7 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
     }
 
     uint8_t *hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!hdr) hdr = malloc(FW_HEADER_BUF_SIZE);
+    if (!hdr) hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!hdr) {
         ESP_LOGW(TAG, "Header alloc failed, skipping version check");
         esp_http_client_close(client);
@@ -217,29 +218,43 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
     }
 
     int total = 0;
+    int zero_read_count = 0;
     while (total < FW_HEADER_BUF_SIZE && !ble_srv_ota_is_abort_requested() && ble_srv_ota_gen_valid(gen)) {
         int r = esp_http_client_read(client, (char *)(hdr + total), FW_HEADER_BUF_SIZE - total);
-        if (r <= 0) break;
+        if (r < 0) {
+            ESP_LOGW(TAG, "HTTP read error: %d, got %d bytes", r, total);
+            break;
+        }
+        if (r == 0) {
+            zero_read_count++;
+            if (zero_read_count >= 50) {
+                ESP_LOGW(TAG, "HTTP read stalled after %d bytes", total);
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        zero_read_count = 0;
         total += r;
     }
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
     if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) {
-        free(hdr);
+        heap_caps_free(hdr);
         return VERSION_CHECK_ABORT;
     }
 
     if (total < (int)sizeof(esp_app_desc_t)) {
         ESP_LOGW(TAG, "Header too short (%d bytes), cannot verify version, proceeding", total);
-        free(hdr);
+        heap_caps_free(hdr);
         return VERSION_CHECK_SKIP;
     }
 
     esp_app_desc_t rd;
     if (!find_app_desc(hdr, total, &rd)) {
         ESP_LOGW(TAG, "Could not find app descriptor in header, skipping version check");
-        free(hdr);
+        heap_caps_free(hdr);
         return VERSION_CHECK_SKIP;
     }
 
@@ -247,7 +262,7 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 
     fw_ver_t rem_ver;
     fw_ver_parse(rd.version, &rem_ver);
-    free(hdr);
+    heap_caps_free(hdr);
 
     if (!rem_ver.valid) {
         ESP_LOGW(TAG, "Cannot parse remote version '%s', proceeding with download", rd.version);
@@ -415,26 +430,37 @@ static void url_task(void *arg)
 
 bool ble_srv_ota_url_init(void)
 {
+    if (s_initialized) {
+        ESP_LOGW(TAG, "URL OTA already initialized");
+        return true;
+    }
     s_url_task = NULL;
     memset(s_ota_url, 0, sizeof(s_ota_url));
+    s_initialized = true;
     return true;
 }
 
 void ble_srv_ota_url_deinit(void)
 {
+    if (!s_initialized) {
+        return;
+    }
     if (s_url_task) {
         TaskHandle_t task = s_url_task;
-        s_url_task = NULL;
         ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
+        xTaskNotifyGive(task);
+        s_url_task = NULL;
         int wait = 0;
-        while (eTaskGetState(task) != eDeleted && wait < 60) {
+        while (eTaskGetState(task) != eDeleted && wait < 100) {
             vTaskDelay(pdMS_TO_TICKS(10));
             wait++;
         }
         if (eTaskGetState(task) != eDeleted) {
+            ESP_LOGW(TAG, "URL OTA task did not exit in time, force deleting");
             vTaskDelete(task);
         }
     }
+    s_initialized = false;
 }
 
 bool ble_srv_ota_url_start(const char *url)

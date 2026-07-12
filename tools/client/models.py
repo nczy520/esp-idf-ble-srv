@@ -4,6 +4,7 @@ BLE设备数据结构模型
 
 import struct
 from datetime import timedelta
+from typing import Optional
 
 class OTAState:
     IDLE = 0x00
@@ -37,17 +38,17 @@ class OTAError:
     VERSION_SAME = 0x0C
 
 class DeviceInfo:
-    def __init__(self, data):
-        self.chip_name = struct.unpack('<32s', data[0:32])[0].decode('utf-8').strip('\x00')
-        self.chip_model = struct.unpack('<16s', data[32:48])[0].decode('utf-8').strip('\x00')
-        self.flash_size = struct.unpack('<16s', data[48:64])[0].decode('utf-8').strip('\x00')
-        self.mac_address = struct.unpack('<18s', data[64:82])[0].decode('utf-8').strip('\x00')
-        self.version = struct.unpack('<32s', data[82:114])[0].decode('utf-8').strip('\x00')
-        self.cpu_freq_mhz = struct.unpack('<I', data[114:118])[0]
-        self.temperature_celsius = struct.unpack('<f', data[118:122])[0]
-        self.temp_sensor_supported = struct.unpack('<B', data[122:123])[0]
+    def __init__(self, data: bytes) -> None:
+        self.chip_name: str = struct.unpack('<32s', data[0:32])[0].decode('utf-8').strip('\x00')
+        self.chip_model: str = struct.unpack('<16s', data[32:48])[0].decode('utf-8').strip('\x00')
+        self.flash_size: str = struct.unpack('<16s', data[48:64])[0].decode('utf-8').strip('\x00')
+        self.mac_address: str = struct.unpack('<18s', data[64:82])[0].decode('utf-8').strip('\x00')
+        self.version: str = struct.unpack('<32s', data[82:114])[0].decode('utf-8').strip('\x00')
+        self.cpu_freq_mhz: int = struct.unpack('<I', data[114:118])[0]
+        self.temperature_celsius: float = struct.unpack('<f', data[118:122])[0]
+        self.temp_sensor_supported: bool = bool(struct.unpack('<B', data[122:123])[0])
 
-    def __str__(self):
+    def __str__(self) -> str:
         result = f"芯片名称: {self.chip_name}\n芯片型号: {self.chip_model}\nFlash大小: {self.flash_size}\nMAC地址: {self.mac_address}\n版本: {self.version}\nCPU频率: {self.cpu_freq_mhz}MHz"
         if self.temp_sensor_supported:
             result += f"\n温度: {self.temperature_celsius:.2f}°C"
@@ -56,58 +57,58 @@ class DeviceInfo:
         return result
 
 class MemoryInfo:
-    def __init__(self, data):
-        self.heap_total = struct.unpack('<I', data[0:4])[0]
-        self.heap_free = struct.unpack('<I', data[4:8])[0]
-        self.heap_min_free = struct.unpack('<I', data[8:12])[0]
-        self.stack_high_watermark = struct.unpack('<I', data[12:16])[0]
+    def __init__(self, data: bytes) -> None:
+        self.heap_total: int = struct.unpack('<I', data[0:4])[0]
+        self.heap_free: int = struct.unpack('<I', data[4:8])[0]
+        self.heap_min_free: int = struct.unpack('<I', data[8:12])[0]
+        self.stack_high_watermark: int = struct.unpack('<I', data[12:16])[0]
         if len(data) >= 28:
-            self.psram_total = struct.unpack('<I', data[16:20])[0]
-            self.psram_free = struct.unpack('<I', data[20:24])[0]
-            self.psram_min_free = struct.unpack('<I', data[24:28])[0]
+            self.psram_total: int = struct.unpack('<I', data[16:20])[0]
+            self.psram_free: int = struct.unpack('<I', data[20:24])[0]
+            self.psram_min_free: int = struct.unpack('<I', data[24:28])[0]
         else:
-            self.psram_total = 0
-            self.psram_free = 0
-            self.psram_min_free = 0
+            self.psram_total: int = 0
+            self.psram_free: int = 0
+            self.psram_min_free: int = 0
 
-    def __str__(self):
+    def __str__(self) -> str:
         result = f"堆内存总量: {self.heap_total / 1024:.1f} KB\n堆内存可用: {self.heap_free / 1024:.1f} KB\n堆内存最小可用: {self.heap_min_free / 1024:.1f} KB\n栈高水位: {self.stack_high_watermark} bytes"
         if self.psram_total > 0:
             result += f"\nPSRAM总量: {self.psram_total / 1024:.1f} KB\nPSRAM可用: {self.psram_free / 1024:.1f} KB\nPSRAM最小可用: {self.psram_min_free / 1024:.1f} KB"
         return result
 
 class CPUInfo:
-    def __init__(self, data):
-        self.cpu_freq_mhz = struct.unpack('<I', data[0:4])[0]
-        self.cpu_usage = struct.unpack('<I', data[4:8])[0]
-        self.uptime_seconds = struct.unpack('<I', data[8:12])[0]
+    def __init__(self, data: bytes) -> None:
+        self.cpu_freq_mhz: int = struct.unpack('<I', data[0:4])[0]
+        self.cpu_usage: int = struct.unpack('<I', data[4:8])[0]
+        self.uptime_seconds: int = struct.unpack('<I', data[8:12])[0]
 
-    def __str__(self):
+    def __str__(self) -> str:
         uptime = timedelta(seconds=self.uptime_seconds)
         return f"CPU频率: {self.cpu_freq_mhz}MHz\nCPU使用率: {self.cpu_usage}%\n运行时间: {uptime}"
 
 class FlashInfo:
-    def __init__(self, data):
-        self.flash_total = struct.unpack('<I', data[0:4])[0]
-        self.flash_free = struct.unpack('<I', data[4:8])[0]
-        self.partition_count = struct.unpack('<B', data[8:9])[0]
+    def __init__(self, data: bytes) -> None:
+        self.flash_total: int = struct.unpack('<I', data[0:4])[0]
+        self.flash_free: int = struct.unpack('<I', data[4:8])[0]
+        self.partition_count: int = struct.unpack('<B', data[8:9])[0]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Flash总量: {self.flash_total / (1024 * 1024):.1f} MB\nFlash可用: {self.flash_free / (1024 * 1024):.1f} MB\n分区数量: {self.partition_count}"
 
 class PartitionInfo:
-    def __init__(self, data):
-        self.label = struct.unpack('<16s', data[0:16])[0].decode('utf-8').strip('\x00')
-        self.address = struct.unpack('<I', data[16:20])[0]
-        self.size = struct.unpack('<I', data[20:24])[0]
-        self.type = struct.unpack('<B', data[24:25])[0]
-        self.subtype = struct.unpack('<B', data[25:26])[0]
+    def __init__(self, data: bytes) -> None:
+        self.label: str = struct.unpack('<16s', data[0:16])[0].decode('utf-8').strip('\x00')
+        self.address: int = struct.unpack('<I', data[16:20])[0]
+        self.size: int = struct.unpack('<I', data[20:24])[0]
+        self.type: int = struct.unpack('<B', data[24:25])[0]
+        self.subtype: int = struct.unpack('<B', data[25:26])[0]
 
-    def get_type_name(self):
+    def get_type_name(self) -> str:
         types = {0: 'app', 1: 'data'}
         return types.get(self.type, f'unknown({self.type})')
 
-    def get_subtype_name(self):
+    def get_subtype_name(self) -> str:
         if self.type == 0:
             subtypes = {0: 'factory', 16: 'ota_0', 17: 'ota_1'}
         elif self.type == 1:
@@ -116,18 +117,18 @@ class PartitionInfo:
             subtypes = {}
         return subtypes.get(self.subtype, f'unknown({self.subtype})')
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.label:12} | 地址: 0x{self.address:08X} | 大小: {self.size / 1024:6.1f} KB | 类型: {self.get_type_name():8} | 子类型: {self.get_subtype_name()}"
 
 class OTAStatus:
-    def __init__(self, data):
-        self.state = struct.unpack('<B', data[0:1])[0]
-        self.error_code = struct.unpack('<B', data[1:2])[0]
-        self.fw_size = struct.unpack('<I', data[2:6])[0]
-        self.bytes_written = struct.unpack('<I', data[6:10])[0]
-        self.progress = struct.unpack('<B', data[10:11])[0]
+    def __init__(self, data: bytes) -> None:
+        self.state: int = struct.unpack('<B', data[0:1])[0]
+        self.error_code: int = struct.unpack('<B', data[1:2])[0]
+        self.fw_size: int = struct.unpack('<I', data[2:6])[0]
+        self.bytes_written: int = struct.unpack('<I', data[6:10])[0]
+        self.progress: int = struct.unpack('<B', data[10:11])[0]
 
-    def __str__(self):
+    def __str__(self) -> str:
         state_names = {
             OTAState.IDLE: "空闲",
             OTAState.CHECKING: "检查版本中",
@@ -162,37 +163,37 @@ class OTAStatus:
         return f"状态: {state_names.get(self.state, f'未知({self.state})')}\n错误: {error_names.get(self.error_code, f'未知({self.error_code})')}\n固件大小: {self.fw_size} bytes\n已写入: {self.bytes_written} bytes\n进度: {self.progress}%"
 
 class WiFiStatus:
-    def __init__(self, data):
-        self.connected = struct.unpack('<B', data[0:1])[0]
-        self.rssi = struct.unpack('<B', data[1:2])[0]
-        self.ip_address = struct.unpack('<I', data[2:6])[0]
+    def __init__(self, data: bytes) -> None:
+        self.connected: bool = bool(struct.unpack('<B', data[0:1])[0])
+        self.rssi: int = struct.unpack('<B', data[1:2])[0]
+        self.ip_address: int = struct.unpack('<I', data[2:6])[0]
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.connected:
             ip = f"{self.ip_address & 0xFF}.{(self.ip_address >> 8) & 0xFF}.{(self.ip_address >> 16) & 0xFF}.{(self.ip_address >> 24) & 0xFF}"
             return f"状态: 已连接\n信号强度: -{self.rssi} dBm\nIP地址: {ip}"
         return f"状态: 未连接"
 
 class TemperatureInfo:
-    def __init__(self, data):
-        self.temperature_celsius = struct.unpack('<h', data[0:2])[0] / 10.0
-        self.temperature_min = struct.unpack('<h', data[2:4])[0] / 10.0
-        self.temperature_max = struct.unpack('<h', data[4:6])[0] / 10.0
-        self.temperature_samples = struct.unpack('<H', data[6:8])[0]
+    def __init__(self, data: bytes) -> None:
+        self.temperature_celsius: float = struct.unpack('<h', data[0:2])[0] / 10.0
+        self.temperature_min: float = struct.unpack('<h', data[2:4])[0] / 10.0
+        self.temperature_max: float = struct.unpack('<h', data[4:6])[0] / 10.0
+        self.temperature_samples: int = struct.unpack('<H', data[6:8])[0]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"当前温度: {self.temperature_celsius:.1f}°C\n最低温度: {self.temperature_min:.1f}°C\n最高温度: {self.temperature_max:.1f}°C\n采样次数: {self.temperature_samples}"
 
 class PowerInfo:
-    def __init__(self, data):
-        self.total_power_mw = struct.unpack('<I', data[0:4])[0]
-        self.cpu_power_mw = struct.unpack('<I', data[4:8])[0]
-        self.wifi_power_mw = struct.unpack('<I', data[8:12])[0]
-        self.ble_power_mw = struct.unpack('<I', data[12:16])[0]
-        self.peripherals_power_mw = struct.unpack('<I', data[16:20])[0]
-        self.power_min_mw = struct.unpack('<I', data[20:24])[0]
-        self.power_max_mw = struct.unpack('<I', data[24:28])[0]
-        self.power_samples = struct.unpack('<I', data[28:32])[0]
+    def __init__(self, data: bytes) -> None:
+        self.total_power_mw: int = struct.unpack('<I', data[0:4])[0]
+        self.cpu_power_mw: int = struct.unpack('<I', data[4:8])[0]
+        self.wifi_power_mw: int = struct.unpack('<I', data[8:12])[0]
+        self.ble_power_mw: int = struct.unpack('<I', data[12:16])[0]
+        self.peripherals_power_mw: int = struct.unpack('<I', data[16:20])[0]
+        self.power_min_mw: int = struct.unpack('<I', data[20:24])[0]
+        self.power_max_mw: int = struct.unpack('<I', data[24:28])[0]
+        self.power_samples: int = struct.unpack('<I', data[28:32])[0]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"系统总功耗: {self.total_power_mw} mW\nCPU功耗: {self.cpu_power_mw} mW\nWiFi功耗: {self.wifi_power_mw} mW\n蓝牙功耗: {self.ble_power_mw} mW\n外设功耗: {self.peripherals_power_mw} mW\n最低功耗: {self.power_min_mw} mW\n最高功耗: {self.power_max_mw} mW\n采样次数: {self.power_samples}"

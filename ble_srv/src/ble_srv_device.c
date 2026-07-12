@@ -1,5 +1,6 @@
 #include "ble_srv_device.h"
 #include "ble_srv_temp_sensor.h"
+#include "ble_srv_ota_common.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
@@ -250,11 +251,20 @@ void ble_srv_restart_device(void)
 {
     ESP_LOGI(TAG, "Restarting device...");
     if (!s_restart_timer) {
-        s_restart_timer = xTimerCreate("dev_rboot", pdMS_TO_TICKS(100),
+        s_restart_timer = xTimerCreate("dev_rboot", pdMS_TO_TICKS(BLE_RESTART_DELAY_MS),
                                         pdFALSE, NULL, restart_timer_cb);
     }
     if (s_restart_timer) {
         xTimerReset(s_restart_timer, 0);
         xTimerStart(s_restart_timer, 0);
+    }
+}
+
+void ble_srv_device_deinit(void)
+{
+    if (s_restart_timer) {
+        xTimerStop(s_restart_timer, 0);
+        xTimerDelete(s_restart_timer, portMAX_DELAY);
+        s_restart_timer = NULL;
     }
 }

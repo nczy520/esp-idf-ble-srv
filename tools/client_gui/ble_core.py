@@ -9,6 +9,7 @@ import os
 import time
 import queue
 import threading
+from typing import Optional, List, Dict, Any, Callable, Tuple, Union
 
 try:
     from bleak import BleakClient, BleakScanner, BleakError
@@ -571,7 +572,7 @@ class BleCore:
         return data[0] if data else 0
 
     async def led_set_color(self, r, g, b):
-        await self._write_gatt(BLE_LED_COLOR_CHAR_UUID, bytes([g, r, b]))
+        await self._write_gatt(BLE_LED_COLOR_CHAR_UUID, bytes([r, g, b]))
         self._log(f"LED 颜色已设置: R={r}, G={g}, B={b}", "success")
         return True
 
@@ -815,9 +816,12 @@ class BleCore:
                                 if not self.connected:
                                     self._reset_ota_state()
                                     return False, "连接已断开"
-                                if self.ota_status and self.ota_status.state in (OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL):
+                                if self.ota_status and self.ota_status.state in (
+                                        OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL,
+                                        OTAState.APPLY_FAIL, OTAState.CHECK_FAIL):
                                     self._reset_ota_state()
-                                    return False, "设备返回错误状态"
+                                    err_msg = f"设备返回错误状态: {self.ota_status.state}"
+                                    return False, err_msg
                                 await asyncio.sleep(0.1)
                     else:
                         await asyncio.sleep(packet_interval)

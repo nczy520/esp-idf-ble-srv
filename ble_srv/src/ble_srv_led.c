@@ -49,13 +49,13 @@ static TaskHandle_t s_effect_task = NULL;
 
 static void ble_srv_led_send_pixel(uint8_t red, uint8_t green, uint8_t blue);
 
-static void ws2812_grb_to_rmt_symbols(uint8_t green, uint8_t red, uint8_t blue,
+static void ws2812_rgb_to_rmt_symbols(uint8_t red, uint8_t green, uint8_t blue,
                                         rmt_symbol_word_t *symbols)
 {
-    uint32_t grb = ((uint32_t)green << 16) | ((uint32_t)red << 8) | blue;
+    uint32_t rgb = ((uint32_t)red << 16) | ((uint32_t)green << 8) | blue;
     for (int i = 23; i >= 0; i--) {
         int idx = 23 - i;
-        if (grb & (1 << i)) {
+        if (rgb & (1 << i)) {
             symbols[idx].duration0 = WS2812_T1H_TICKS;
             symbols[idx].level0 = 1;
             symbols[idx].duration1 = WS2812_T1L_TICKS;
@@ -80,7 +80,7 @@ static void ble_srv_led_send_pixel(uint8_t red, uint8_t green, uint8_t blue)
     }
 
     rmt_symbol_word_t symbols[25];
-    ws2812_grb_to_rmt_symbols(green, red, blue, symbols);
+    ws2812_rgb_to_rmt_symbols(red, green, blue, symbols);
 
     rmt_transmit_config_t tx_config = {
         .loop_count = 0,

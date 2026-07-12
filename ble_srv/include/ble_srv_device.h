@@ -71,6 +71,7 @@ bool ble_srv_get_memory_info(ble_srv_memory_info_t *info);
 bool ble_srv_get_cpu_info(ble_srv_cpu_info_t *info);
 bool ble_srv_get_flash_info(ble_srv_flash_info_t *info);
 bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info);
+void ble_srv_device_deinit(void);
 
 #ifdef __cplusplus
 }

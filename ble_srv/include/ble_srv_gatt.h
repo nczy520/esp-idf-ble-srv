@@ -41,6 +41,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                             struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 const struct ble_gatt_svc_def *ble_srv_get_gatt_svcs(void);
+void ble_srv_gatt_deinit(void);
 
 #ifdef __cplusplus
 }

@@ -55,7 +55,11 @@ class GuiComponents:
         self.r_slider = led_tab_comp.r_slider
         self.g_slider = led_tab_comp.g_slider
         self.b_slider = led_tab_comp.b_slider
+        self.r_val_text = led_tab_comp.r_val_text
+        self.g_val_text = led_tab_comp.g_val_text
+        self.b_val_text = led_tab_comp.b_val_text
         self.color_box = led_tab_comp.color_box
+        self.color_code_text = led_tab_comp.color_code_text
         self.effect_menu = led_tab_comp.effect_menu
         self.effect_value = led_tab_comp
         self.speed_slider = led_tab_comp.speed_slider
