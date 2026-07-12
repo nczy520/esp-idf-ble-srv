@@ -120,7 +120,6 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
         ble_srv_led_set_on(false);
 #endif
-        vTaskDelay(pdMS_TO_TICKS(200));
         ble_srv_start_advertising();
         break;
 

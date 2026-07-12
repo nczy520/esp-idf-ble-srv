@@ -12,7 +12,7 @@ class WiFiControlHandler(BaseHandler):
     def _reset_wifi_ui_on_disconnect(self):
         """断开连接时重置WiFi UI状态"""
         self.ui.wifi_display.value = "未连接"
-        self.page.update()
+        self.safe_update()
 
     def wifi_connect(self, event=None):
         if not self.check_connected():
@@ -38,7 +38,7 @@ class WiFiControlHandler(BaseHandler):
                 return
             self.ui.wifi_display.value = str(result)
             self.log("WiFi状态读取成功", "success")
-            self.page.update()
+            self.safe_update()
         self._run_with_loading(btn, self.ble.wifi_status(), callback)
 
     def wifi_forget(self, event=None):

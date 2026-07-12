@@ -43,6 +43,8 @@ typedef enum {
     BLE_OTA_ERR_NO_NETWORK,
     BLE_OTA_ERR_ABORTED,
     BLE_OTA_ERR_DISCONNECTED,
+    BLE_OTA_ERR_VERSION_DOWNGRADE,
+    BLE_OTA_ERR_VERSION_SAME,
 } ble_ota_err_t;
 
 typedef enum {

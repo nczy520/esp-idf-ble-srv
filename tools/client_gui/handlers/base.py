@@ -5,12 +5,13 @@ GUI事件处理基础模块
 
 import time
 import asyncio
+import threading
 
 import flet as ft
 
 
 class BaseHandler:
-    """基础处理类，提供通用功能"""
+    _update_lock = threading.Lock()
 
     def __init__(self, app):
         self.app = app
@@ -18,6 +19,10 @@ class BaseHandler:
         self.page = None
         self.ui = None
         self._loading_count = 0
+
+    def safe_update(self):
+        with BaseHandler._update_lock:
+            self.page.update()
 
     def set_ui(self, ui):
         self.ui = ui
@@ -48,7 +53,7 @@ class BaseHandler:
         )
         if len(self.ui.log_view.controls) > 500:
             self.ui.log_view.controls = self.ui.log_view.controls[-300:]
-        self.page.update()
+        self.safe_update()
 
     def ble_log(self, msg, direction="info"):
         """添加蓝牙通讯日志"""
@@ -87,17 +92,17 @@ class BaseHandler:
         )
         if len(self.ui.ble_log_view.controls) > 500:
             self.ui.ble_log_view.controls = self.ui.ble_log_view.controls[-300:]
-        self.page.update()
+        self.safe_update()
 
     def clear_log(self, event=None):
         """清空日志"""
         self.ui.log_view.controls.clear()
-        self.page.update()
+        self.safe_update()
 
     def clear_ble_log(self, event=None):
         """清空蓝牙通讯日志"""
         self.ui.ble_log_view.controls.clear()
-        self.page.update()
+        self.safe_update()
 
     def check_connected(self):
         """检查是否已连接设备"""
@@ -107,12 +112,14 @@ class BaseHandler:
         return True
 
     def _get_all_action_buttons(self):
-        """获取所有操作按钮"""
+        """获取所有操作按钮（包含scan_btn和connect_toggle_btn）"""
         buttons = []
-        # 设备信息按钮
+        if hasattr(self.ui, 'scan_btn') and self.ui.scan_btn:
+            buttons.append(self.ui.scan_btn)
+        if hasattr(self.ui, 'connect_toggle_btn') and self.ui.connect_toggle_btn:
+            buttons.append(self.ui.connect_toggle_btn)
         if hasattr(self.ui, 'info_tab') and self.ui.info_tab:
             buttons.extend(self.ui.info_tab.info_btns)
-        # LED控制按钮
         if hasattr(self.ui, 'led_tab') and self.ui.led_tab:
             buttons.extend([
                 self.ui.led_tab.led_on_btn,
@@ -121,7 +128,6 @@ class BaseHandler:
                 self.ui.led_tab.led_set_color_btn,
                 self.ui.led_tab.led_set_effect_btn,
             ])
-        # WiFi按钮
         if hasattr(self.ui, 'wifi_tab') and self.ui.wifi_tab:
             buttons.extend([
                 self.ui.wifi_tab.wifi_connect_btn,
@@ -129,46 +135,118 @@ class BaseHandler:
                 self.ui.wifi_tab.wifi_forget_btn,
                 self.ui.wifi_tab.wifi_ntp_btn,
             ])
-        # OTA按钮
         if hasattr(self.ui, 'ota_tab') and self.ui.ota_tab:
             buttons.extend([
+                self.ui.ota_tab.ota_bt_btn,
                 self.ui.ota_tab.ota_url_btn,
                 self.ui.ota_tab.ota_default_btn,
+                self.ui.ota_tab.ota_abort_btn,
             ])
         return buttons
 
+    def _get_excluded_buttons(self):
+        """获取操作期间不禁用的按钮：扫描按钮、连接/断开按钮、OTA运行时的中止按钮"""
+        excluded = []
+        if hasattr(self.ui, 'scan_btn') and self.ui.scan_btn:
+            excluded.append(self.ui.scan_btn)
+        if hasattr(self.ui, 'connect_toggle_btn') and self.ui.connect_toggle_btn:
+            excluded.append(self.ui.connect_toggle_btn)
+        ota_handler = getattr(self.app.handlers, 'ota_control', None)
+        if ota_handler and ota_handler.ota_running:
+            if hasattr(self.ui, 'ota_tab') and self.ui.ota_tab and self.ui.ota_tab.ota_abort_btn:
+                excluded.append(self.ui.ota_tab.ota_abort_btn)
+        return excluded
+
+    def _apply_disabled_style(self, btn):
+        """为按钮应用禁用视觉样式：原色50%透明、无阴影"""
+        if not hasattr(btn, '_saved_bgcolor'):
+            btn._saved_bgcolor = btn.bgcolor
+        if not hasattr(btn, '_saved_color'):
+            btn._saved_color = btn.color
+        if not hasattr(btn, '_saved_elevation'):
+            btn._saved_elevation = btn.style.elevation if btn.style else 2
+        btn.bgcolor = ft.Colors.with_opacity(0.5, btn._saved_bgcolor) if btn._saved_bgcolor else btn.bgcolor
+        btn.color = ft.Colors.with_opacity(0.5, btn._saved_color) if btn._saved_color else btn.color
+        if btn.style:
+            btn.style.elevation = 0
+
+    def _apply_loading_style(self, btn):
+        """为按钮应用Loading视觉样式：原色70%透明、无阴影"""
+        if not hasattr(btn, '_saved_bgcolor'):
+            btn._saved_bgcolor = btn.bgcolor
+        if not hasattr(btn, '_saved_color'):
+            btn._saved_color = btn.color
+        if not hasattr(btn, '_saved_elevation'):
+            btn._saved_elevation = btn.style.elevation if btn.style else 2
+        btn.bgcolor = ft.Colors.with_opacity(0.7, btn._saved_bgcolor) if btn._saved_bgcolor else btn.bgcolor
+        btn.color = ft.Colors.with_opacity(0.7, btn._saved_color) if btn._saved_color else btn.color
+        if btn.style:
+            btn.style.elevation = 0
+
+    def _restore_button_style(self, btn):
+        """恢复按钮原始视觉样式"""
+        if hasattr(btn, '_saved_bgcolor'):
+            btn.bgcolor = btn._saved_bgcolor
+            del btn._saved_bgcolor
+        if hasattr(btn, '_saved_color'):
+            btn.color = btn._saved_color
+            del btn._saved_color
+        if hasattr(btn, '_saved_elevation') and btn.style:
+            btn.style.elevation = btn._saved_elevation
+            del btn._saved_elevation
+
     def _show_btn_loading(self, active_btn, loading_text="处理中..."):
-        """显示按钮Loading状态 - 禁用所有按钮，激活按钮显示Loading"""
+        """显示按钮Loading状态 - 禁用除scan/connect外的所有按钮，激活按钮显示Loading"""
         self._loading_count += 1
-        # 保存所有按钮的原始状态
+        excluded = self._get_excluded_buttons()
         for btn in self._get_all_action_buttons():
+            if btn in excluded:
+                continue
             if btn is active_btn:
-                # 激活按钮：显示Loading
-                if not hasattr(btn, '_original_content'):
-                    btn._original_content = btn.content
-                if not hasattr(btn, '_original_icon'):
-                    btn._original_icon = btn.icon
-                btn.content = loading_text
-                btn.icon = ft.Icons.SYNC
-            else:
-                # 其他按钮：禁用但不改变外观
                 btn.disabled = True
-        self.page.update()
+                self._apply_loading_style(btn)
+            else:
+                btn.disabled = True
+                self._apply_disabled_style(btn)
+        self.safe_update()
 
     def _hide_btn_loading(self, active_btn):
         """恢复按钮原始状态"""
         self._loading_count = max(0, self._loading_count - 1)
         if self._loading_count > 0:
             return
-        # 恢复所有按钮
+        excluded = self._get_excluded_buttons()
         for btn in self._get_all_action_buttons():
+            if btn in excluded:
+                continue
             btn.disabled = False
-            if btn is active_btn:
-                if hasattr(btn, '_original_content'):
-                    btn.content = btn._original_content
-                if hasattr(btn, '_original_icon') and btn._original_icon:
-                    btn.icon = btn._original_icon
-        self.page.update()
+            self._restore_button_style(btn)
+        self._restore_ota_abort_btn_state()
+        self.safe_update()
+
+    def _force_restore_all_buttons(self):
+        """强制恢复所有按钮的原始样式（用于断开连接等异常场景）"""
+        self._loading_count = 0
+        for btn in self._get_all_action_buttons():
+            self._restore_button_style(btn)
+            btn.disabled = False
+        self._restore_ota_abort_btn_state()
+        self.safe_update()
+
+    def _restore_ota_abort_btn_state(self):
+        """恢复OTA中止按钮的正确状态"""
+        if hasattr(self.ui, 'ota_tab') and self.ui.ota_tab:
+            ota_handler = getattr(self.app.handlers, 'ota_control', None)
+            abort_btn = self.ui.ota_tab.ota_abort_btn
+            is_running = ota_handler and ota_handler.ota_running
+            if is_running:
+                abort_btn.disabled = False
+                self._restore_button_style(abort_btn)
+                abort_btn.bgcolor = ft.Colors.RED_700
+                abort_btn.color = ft.Colors.WHITE
+            else:
+                abort_btn.disabled = True
+                self._apply_disabled_style(abort_btn)
 
     def _run_with_loading(self, btn, coro, callback, loading_text="读取中...", timeout=3):
         """带Loading状态的异步执行"""
@@ -178,7 +256,6 @@ class BaseHandler:
             self._hide_btn_loading(btn)
             callback(result)
 
-        # 设置超时
         async def coro_with_timeout():
             return await asyncio.wait_for(coro, timeout=timeout)
 
@@ -189,11 +266,11 @@ class BaseHandler:
         if hasattr(self.ui, 'loading_overlay') and self.ui.loading_overlay:
             self.ui.loading_overlay.content.controls[1].value = message
             self.ui.loading_overlay.visible = True
-            self.page.update()
+            self.safe_update()
         self.log(message, "info")
 
     def _hide_loading(self):
         """隐藏全局Loading状态"""
         if hasattr(self.ui, 'loading_overlay') and self.ui.loading_overlay:
             self.ui.loading_overlay.visible = False
-            self.page.update()
+            self.safe_update()

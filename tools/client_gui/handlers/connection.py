@@ -66,7 +66,7 @@ class ConnectionHandler(BaseHandler):
                 btn.tooltip = "连接此设备"
                 btn.disabled = False
         
-        self.page.update()
+        self.safe_update()
 
     def _get_rssi_color(self, rssi):
         """根据信号强度获取颜色"""
@@ -152,42 +152,37 @@ class ConnectionHandler(BaseHandler):
             return
         self.scan_lock = True
         self.ui.scan_btn.disabled = True
-        self.ui.scan_btn.content = "扫描中..."
-        self.ui.scan_btn.icon = ft.Icons.SYNC
-        self.page.update()
+        self._apply_loading_style(self.ui.scan_btn)
+        self.safe_update()
         self.log("开始扫描BLE设备...", "info")
         name_filter = self.ui.filter_field.value.strip() or None
         timeout = self.ui.scan_timeout_dropdown.get_scan_timeout() if hasattr(self.ui.scan_timeout_dropdown, 'get_scan_timeout') else 5
 
-        # 清空设备列表
         self.devices = []
         self.ui.device_list.controls.clear()
         self._device_rssi_controls.clear()
         self._device_connect_btns.clear()
-        self.page.update()
+        self.safe_update()
 
         def on_device_found(device_info):
-            """扫描到设备时的回调"""
-            # 检查是否已存在
             for existing in self.devices:
                 if existing['address'] == device_info['address']:
                     return
             self.devices.append(device_info)
             idx = len(self.devices) - 1
             self._add_device_to_list(device_info, idx)
-            self.page.update()
+            self.safe_update()
 
         def on_done(result):
             self.scan_lock = False
             self.ui.scan_btn.disabled = False
-            self.ui.scan_btn.content = "扫描设备"
-            self.ui.scan_btn.icon = ft.Icons.SEARCH_ROUNDED
+            self._restore_button_style(self.ui.scan_btn)
             if isinstance(result, Exception):
                 self.log(f"扫描失败: {result}", "error")
-                self.page.update()
+                self.safe_update()
                 return
             self.log(f"扫描完成，发现 {len(result)} 个设备", "success")
-            self.page.update()
+            self.safe_update()
 
         self.app.run_async(
             self.ble.scan_devices(timeout=timeout, name_filter=name_filter, on_device_found=on_device_found),
@@ -211,7 +206,7 @@ class ConnectionHandler(BaseHandler):
                 self.ui.status_text.color = ft.Colors.ON_SURFACE
                 self.ui.connect_toggle_btn.disabled = False
                 self.log(f"已选择: {device['name']}", "info")
-                self.page.update()
+                self.safe_update()
                 self.handle_connect()
 
     def handle_device_click(self, event):
@@ -224,7 +219,7 @@ class ConnectionHandler(BaseHandler):
             self.ui.status_text.color = ft.Colors.ON_SURFACE
             self.ui.connect_toggle_btn.disabled = False
             self.log(f"已选择: {device['name']}", "info")
-            self.page.update()
+            self.safe_update()
 
     def handle_connect_toggle(self, event=None):
         """连接/断开切换"""
@@ -242,14 +237,11 @@ class ConnectionHandler(BaseHandler):
         if self.ble.connected:
             self.log("已连接设备，请先断开", "warn")
             return
-        self.ui.connect_toggle_btn.disabled = True
-        self.ui.connect_toggle_btn.content = "连接中..."
-        self.ui.connect_toggle_btn.icon = ft.Icons.SYNC
         self.log(f"正在连接 {device['name']}...", "info")
         self.ble_log(f"连接到 {device['name']} ({device['address']})", "info")
-        self.page.update()
+        btn = self.ui.connect_toggle_btn
 
-        def on_done(result):
+        def callback(result):
             if isinstance(result, Exception):
                 self.update_connection_ui(False)
                 self.log(f"连接异常: {result}", "error")
@@ -265,18 +257,15 @@ class ConnectionHandler(BaseHandler):
                 self.ble_log(f"连接失败: {mtu_or_err}", "error")
                 self.update_connection_ui(False)
 
-        self.app.run_async(self.ble.connect_device(device), on_done)
+        self._run_with_loading(btn, self.ble.connect_device(device), callback, loading_text="连接中...", timeout=10)
 
     def handle_disconnect(self, event=None):
         """断开连接"""
-        self.ui.connect_toggle_btn.disabled = True
-        self.ui.connect_toggle_btn.content = "断开中..."
-        self.ui.connect_toggle_btn.icon = ft.Icons.SYNC
         self.log("正在断开连接...", "info")
         self.ble_log("断开连接", "info")
-        self.page.update()
+        btn = self.ui.connect_toggle_btn
 
-        def on_done(result):
+        def callback(result):
             if isinstance(result, Exception):
                 self.update_connection_ui(False)
                 self.log(f"断开连接异常: {result}", "error")
@@ -286,4 +275,4 @@ class ConnectionHandler(BaseHandler):
             self.log("已断开连接", "info")
             self.ble_log("已断开", "info")
 
-        self.app.run_async(self.ble.disconnect_device(), on_done)
+        self._run_with_loading(btn, self.ble.disconnect_device(), callback, loading_text="断开中...", timeout=5)

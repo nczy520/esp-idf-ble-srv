@@ -17,6 +17,16 @@
 
 static const char *TAG = "BLE_SRV_DEVICE";
 
+static TaskHandle_t s_restart_task_handle = NULL;
+
+static void delayed_restart_task(void *arg)
+{
+    uint32_t delay_ms = (uint32_t)(uintptr_t)arg;
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    esp_restart();
+    vTaskDelete(NULL);
+}
+
 bool ble_srv_get_device_info(ble_srv_device_info_t *info)
 {
     if (!info) {
@@ -60,13 +70,21 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
     }
 
     uint32_t flash_size = 0;
-    esp_flash_get_size(NULL, &flash_size);
-    snprintf(info->flash_size, sizeof(info->flash_size), "%luMB", (unsigned long)(flash_size / (1024 * 1024)));
+    esp_err_t ret = esp_flash_get_size(NULL, &flash_size);
+    if (ret == ESP_OK && flash_size > 0) {
+        snprintf(info->flash_size, sizeof(info->flash_size), "%luMB", (unsigned long)(flash_size / (1024 * 1024)));
+    } else {
+        snprintf(info->flash_size, sizeof(info->flash_size), "Unknown");
+    }
 
     uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_BT);
-    snprintf(info->mac_address, sizeof(info->mac_address), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    ret = esp_read_mac(mac, ESP_MAC_BT);
+    if (ret == ESP_OK) {
+        snprintf(info->mac_address, sizeof(info->mac_address), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]);
+    } else {
+        snprintf(info->mac_address, sizeof(info->mac_address), "Unknown");
+    }
 
     const esp_app_desc_t *app_desc = esp_app_get_description();
     if (app_desc) {
@@ -75,7 +93,6 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
 
     info->cpu_freq_mhz = (uint32_t)(esp_clk_cpu_freq() / 1000000);
 
-    // 读取温度传感器
     info->temp_sensor_supported = ble_srv_temp_sensor_is_supported() ? 1 : 0;
     if (info->temp_sensor_supported) {
         float temp = 0.0f;
@@ -83,11 +100,11 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
             info->temperature_celsius = temp;
             ESP_LOGI(TAG, "Temperature: %.2f°C", temp);
         } else {
-            info->temperature_celsius = -999.0f; // 表示读取失败
+            info->temperature_celsius = -999.0f;
             ESP_LOGW(TAG, "Failed to read temperature");
         }
     } else {
-        info->temperature_celsius = -999.0f; // 表示不支持
+        info->temperature_celsius = -999.0f;
         ESP_LOGI(TAG, "Temperature sensor not supported");
     }
 
@@ -109,7 +126,7 @@ bool ble_srv_get_memory_info(ble_srv_memory_info_t *info)
     info->heap_total = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
     info->heap_free = esp_get_free_heap_size();
     info->heap_min_free = esp_get_minimum_free_heap_size();
-    info->stack_high_watermark = (uint32_t)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t);
+    info->stack_high_watermark = (uint32_t)uxTaskGetStackHighWaterMark(NULL) * (uint32_t)sizeof(StackType_t);
 
 #if CONFIG_SPIRAM
     info->psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
@@ -121,7 +138,7 @@ bool ble_srv_get_memory_info(ble_srv_memory_info_t *info)
     info->psram_min_free = 0;
 #endif
 
-    ESP_LOGI(TAG, "Memory: total=%lu, free=%lu, min_free=%lu, stack_hwm=%lu, psram_total=%lu, psram_free=%lu",
+    ESP_LOGI(TAG, "Memory: total=%lu, free=%lu, min_free=%lu, caller_stack_hwm=%lu, psram_total=%lu, psram_free=%lu",
              (unsigned long)info->heap_total, (unsigned long)info->heap_free,
              (unsigned long)info->heap_min_free, (unsigned long)info->stack_high_watermark,
              (unsigned long)info->psram_total, (unsigned long)info->psram_free);
@@ -141,7 +158,7 @@ bool ble_srv_get_cpu_info(ble_srv_cpu_info_t *info)
     info->cpu_usage = 0;
     info->uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000);
 
-    ESP_LOGI(TAG, "CPU: freq=%luMHz, uptime=%lus",
+    ESP_LOGI(TAG, "CPU: freq=%luMHz, uptime=%lus (cpu_usage=0: not implemented)",
              (unsigned long)info->cpu_freq_mhz, (unsigned long)info->uptime_seconds);
 
     return true;
@@ -156,23 +173,33 @@ bool ble_srv_get_flash_info(ble_srv_flash_info_t *info)
     memset(info, 0, sizeof(*info));
 
     uint32_t flash_size = 0;
-    esp_flash_get_size(NULL, &flash_size);
+    esp_err_t ret = esp_flash_get_size(NULL, &flash_size);
+    if (ret != ESP_OK) {
+        flash_size = 0;
+    }
     info->flash_total = flash_size;
 
     info->partition_count = 0;
+    uint64_t used = 0;
     esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
-    if (it) {
-        while (it) {
+    while (it != NULL) {
+        const esp_partition_t *part = esp_partition_get(it);
+        if (part) {
             info->partition_count++;
-            it = esp_partition_next(it);
+            used += part->size;
         }
-        esp_partition_iterator_release(it);
+        it = esp_partition_next(it);
     }
 
-    info->flash_free = 0;
+    if (flash_size > used) {
+        info->flash_free = flash_size - (uint32_t)used;
+    } else {
+        info->flash_free = 0;
+    }
 
-    ESP_LOGI(TAG, "Flash: total=%lu, partitions=%d",
-             (unsigned long)info->flash_total, info->partition_count);
+    ESP_LOGI(TAG, "Flash: total=%lu, used=%llu, free=%lu, partitions=%d",
+             (unsigned long)info->flash_total, (unsigned long long)used,
+             (unsigned long)info->flash_free, info->partition_count);
 
     return true;
 }
@@ -186,33 +213,30 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
     memset(info, 0, sizeof(*info));
 
     uint8_t count = 0;
+    const esp_partition_t *found = NULL;
     esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
-    if (!it) {
-        ESP_LOGW(TAG, "No partitions found");
-        return false;
-    }
-
-    const esp_partition_t *part = NULL;
-    while (it) {
+    while (it != NULL) {
         if (count == index) {
-            part = esp_partition_get(it);
+            found = esp_partition_get(it);
             break;
         }
         count++;
         it = esp_partition_next(it);
     }
 
-    if (!part) {
-        esp_partition_iterator_release(it);
+    if (!found) {
+        if (it != NULL) {
+            esp_partition_iterator_release(it);
+        }
         ESP_LOGW(TAG, "Partition index %d not found", index);
         return false;
     }
 
-    strncpy(info->label, part->label, sizeof(info->label) - 1);
-    info->address = part->address;
-    info->size = part->size;
-    info->type = part->type;
-    info->subtype = part->subtype;
+    strncpy(info->label, found->label, sizeof(info->label) - 1);
+    info->address = found->address;
+    info->size = found->size;
+    info->type = found->type;
+    info->subtype = found->subtype;
 
     esp_partition_iterator_release(it);
 
@@ -226,6 +250,8 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
 void ble_srv_restart_device(void)
 {
     ESP_LOGI(TAG, "Restarting device...");
-    vTaskDelay(pdMS_TO_TICKS(100));
-    esp_restart();
+    if (s_restart_task_handle) {
+        return;
+    }
+    xTaskCreate(delayed_restart_task, "dev_restart", 2048, (void *)(uintptr_t)100, 1, &s_restart_task_handle);
 }

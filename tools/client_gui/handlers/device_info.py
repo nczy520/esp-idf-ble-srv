@@ -16,7 +16,7 @@ class DeviceInfoHandler(BaseHandler):
     def _reset_device_info_ui_on_disconnect(self):
         """断开连接时重置设备信息UI状态"""
         self.ui.info_display.value = "未连接"
-        self.page.update()
+        self.safe_update()
 
     def read_device_info(self, event=None):
         if not self.check_connected():
@@ -30,7 +30,7 @@ class DeviceInfoHandler(BaseHandler):
                 return
             self.ui.info_display.value = str(result)
             self.log("设备信息读取成功", "success")
-            self.page.update()
+            self.safe_update()
 
         self._run_with_loading(btn, self.ble.read_device_info(), callback, loading_text="读取中...")
 
@@ -46,7 +46,7 @@ class DeviceInfoHandler(BaseHandler):
                 return
             self.ui.info_display.value = str(result)
             self.log("内存信息读取成功", "success")
-            self.page.update()
+            self.safe_update()
 
         self._run_with_loading(btn, self.ble.read_memory_info(), callback, loading_text="读取中...")
 
@@ -62,7 +62,7 @@ class DeviceInfoHandler(BaseHandler):
                 return
             self.ui.info_display.value = str(result)
             self.log("CPU信息读取成功", "success")
-            self.page.update()
+            self.safe_update()
 
         self._run_with_loading(btn, self.ble.read_cpu_info(), callback, loading_text="读取中...")
 
@@ -78,7 +78,7 @@ class DeviceInfoHandler(BaseHandler):
                 return
             self.ui.info_display.value = str(result)
             self.log("Flash信息读取成功", "success")
-            self.page.update()
+            self.safe_update()
 
         self._run_with_loading(btn, self.ble.read_flash_info(), callback, loading_text="读取中...")
 
@@ -101,7 +101,7 @@ class DeviceInfoHandler(BaseHandler):
                 self.log(f"读取到 {len(result)} 个分区", "success")
             else:
                 self.log("读取分区信息失败", "error")
-            self.page.update()
+            self.safe_update()
 
         self._run_with_loading(btn, self.ble.read_all_partitions(), callback, loading_text="读取中...")
 
@@ -123,7 +123,7 @@ class DeviceInfoHandler(BaseHandler):
             else:
                 self.ui.info_display.value = f"当前温度: {result:.2f}°C"
                 self.log(f"温度: {result:.2f}°C", "success")
-            self.page.update()
+            self.safe_update()
 
         self._run_with_loading(btn, self.ble.read_temperature(), callback, loading_text="读取中...")
 
@@ -134,7 +134,7 @@ class DeviceInfoHandler(BaseHandler):
 
         def do_restart(dlg):
             dlg.open = False
-            self.page.update()
+            self.safe_update()
             self.log("发送重启命令...", "warn")
 
             def callback(result):
@@ -152,10 +152,10 @@ class DeviceInfoHandler(BaseHandler):
             title=ft.Text("确认重启"),
             content=ft.Text("确定要重启设备吗？"),
             actions=[
-                ft.TextButton("取消", on_click=lambda e: setattr(dlg, 'open', False) or self.page.update()),
+                ft.TextButton("取消", on_click=lambda e: setattr(dlg, 'open', False) or self.safe_update()),
                 ft.TextButton("重启", on_click=lambda e: do_restart(dlg)),
             ],
         )
         self.page.overlay.append(dlg)
         dlg.open = True
-        self.page.update()
+        self.safe_update()

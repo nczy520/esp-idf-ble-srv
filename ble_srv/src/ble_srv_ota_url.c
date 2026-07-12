@@ -19,37 +19,90 @@ static const char *TAG = "OTA_URL";
 #define OTA_URL_TASK_STACK    8192
 #define OTA_URL_TASK_PRIO     5
 #define FW_HEADER_BUF_SIZE    4096
-#define HTTP_TIMEOUT_MS       2000
-#define HTTP_BUFFER_SIZE      2048
+#define HTTP_TIMEOUT_MS       10000
+#define HTTP_BUFFER_SIZE      4096
 #define LOOP_TICK_MS          50
 
 static TaskHandle_t s_url_task = NULL;
 static char s_ota_url[BLE_OTA_URL_MAX_URL_LEN + 1] = {0};
 
-static bool parse_version(const char *ver_str, uint8_t *major, uint8_t *minor, uint8_t *patch)
+#define FW_VER_MAX_SEGS 4
+#define FW_VER_SEG_MAX  65535u
+
+typedef struct {
+    uint16_t segs[FW_VER_MAX_SEGS];
+    uint8_t  nsegs;
+    bool     valid;
+} fw_ver_t;
+
+static void fw_ver_parse(const char *str, fw_ver_t *out)
 {
-    if (!ver_str || !major || !minor || !patch) return false;
-    int m = 0, n = 0, p = 0;
-    if (sscanf(ver_str, "%d.%d.%d", &m, &n, &p) == 3) {
-        *major = (uint8_t)m; *minor = (uint8_t)n; *patch = (uint8_t)p; return true;
+    memset(out, 0, sizeof(*out));
+    if (!str) return;
+
+    const char *p = str;
+
+    while (*p && (*p < '0' || *p > '9')) {
+        p++;
     }
-    if (sscanf(ver_str, "%d.%d", &m, &n) == 2) {
-        *major = (uint8_t)m; *minor = (uint8_t)n; *patch = 0; return true;
+    if (!*p) return;
+
+    uint8_t seg_idx = 0;
+    while (seg_idx < FW_VER_MAX_SEGS) {
+        uint32_t val = 0;
+        bool has_digit = false;
+        while (*p >= '0' && *p <= '9') {
+            has_digit = true;
+            uint32_t digit = (uint32_t)(*p - '0');
+            if (val > (FW_VER_SEG_MAX - digit) / 10) {
+                val = FW_VER_SEG_MAX;
+            } else {
+                val = val * 10 + digit;
+            }
+            p++;
+        }
+        if (!has_digit) break;
+        out->segs[seg_idx] = (val > FW_VER_SEG_MAX) ? FW_VER_SEG_MAX : (uint16_t)val;
+        seg_idx++;
+
+        if (*p == '.') {
+            p++;
+            if (*p < '0' || *p > '9') break;
+        } else {
+            break;
+        }
     }
-    if (sscanf(ver_str, "%d", &m) == 1) {
-        *major = (uint8_t)m; *minor = 0; *patch = 0; return true;
-    }
-    return false;
+
+    out->nsegs = seg_idx;
+    out->valid = (seg_idx > 0);
 }
 
-static bool version_newer(uint8_t cm, uint8_t cn, uint8_t cp,
-                           uint8_t nm, uint8_t nn, uint8_t np)
+static int fw_ver_compare(const fw_ver_t *a, const fw_ver_t *b)
 {
-    if (nm > cm) return true;
-    if (nm < cm) return false;
-    if (nn > cn) return true;
-    if (nn < cn) return false;
-    return np > cp;
+    uint8_t max_segs = (a->nsegs > b->nsegs) ? a->nsegs : b->nsegs;
+    for (uint8_t i = 0; i < max_segs; i++) {
+        uint16_t av = (i < a->nsegs) ? a->segs[i] : 0;
+        uint16_t bv = (i < b->nsegs) ? b->segs[i] : 0;
+        if (av > bv) return 1;
+        if (av < bv) return -1;
+    }
+    return 0;
+}
+
+static void fw_ver_to_string(const fw_ver_t *v, char *buf, size_t buf_len)
+{
+    if (!v->valid || buf_len == 0) {
+        if (buf_len > 0) buf[0] = '\0';
+        return;
+    }
+    size_t pos = 0;
+    for (uint8_t i = 0; i < v->nsegs && pos < buf_len - 1; i++) {
+        int written = snprintf(buf + pos, buf_len - pos, "%s%u",
+                               (i == 0) ? "" : ".", v->segs[i]);
+        if (written > 0) pos += (size_t)written;
+        if (pos >= buf_len - 1) break;
+    }
+    buf[pos] = '\0';
 }
 
 static bool find_app_desc(const uint8_t *buf, size_t len, esp_app_desc_t *desc)
@@ -66,16 +119,29 @@ static bool find_app_desc(const uint8_t *buf, size_t len, esp_app_desc_t *desc)
     return false;
 }
 
-static bool check_version(const char *fw_url, uint8_t gen)
-{
-    uint8_t cm, cn, cp;
-    if (!parse_version(esp_app_get_description()->version, &cm, &cn, &cp)) {
-        ESP_LOGW(TAG, "Cannot parse current version, proceeding");
-        return true;
-    }
-    ESP_LOGI(TAG, "Current version: %d.%d.%d", cm, cn, cp);
+typedef enum {
+    VERSION_CHECK_ABORT = -1,
+    VERSION_CHECK_PROCEED = 1,
+    VERSION_CHECK_SKIP = 2,
+    VERSION_CHECK_UP_TO_DATE = 3,
+    VERSION_CHECK_DOWNGRADE = 4,
+} version_check_result_t;
 
-    if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) return false;
+static version_check_result_t check_version(const char *fw_url, uint8_t gen)
+{
+    fw_ver_t cur_ver;
+    fw_ver_parse(esp_app_get_description()->version, &cur_ver);
+    if (!cur_ver.valid) {
+        ESP_LOGW(TAG, "Cannot parse current version '%s', skipping version check",
+                 esp_app_get_description()->version);
+        return VERSION_CHECK_SKIP;
+    }
+
+    char cur_str[32];
+    fw_ver_to_string(&cur_ver, cur_str, sizeof(cur_str));
+    ESP_LOGI(TAG, "Current version: %s (parsed %u segments)", cur_str, cur_ver.nsegs);
+
+    if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) return VERSION_CHECK_ABORT;
 
     esp_http_client_config_t cfg = {
         .url = fw_url,
@@ -83,7 +149,8 @@ static bool check_version(const char *fw_url, uint8_t gen)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = HTTP_TIMEOUT_MS,
         .keep_alive_enable = false,
-        .buffer_size = 1024,
+        .buffer_size = FW_HEADER_BUF_SIZE,
+        .buffer_size_tx = 1024,
 #ifdef CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK
         .skip_cert_common_name_check = true,
 #endif
@@ -91,41 +158,62 @@ static bool check_version(const char *fw_url, uint8_t gen)
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
-        ESP_LOGE(TAG, "HTTP client init failed");
-        return true;
+        ESP_LOGE(TAG, "HTTP client init failed, skipping version check");
+        return VERSION_CHECK_SKIP;
     }
 
     esp_http_client_set_header(client, "Range", "bytes=0-4095");
 
-    if (esp_http_client_open(client, 0) != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP open failed");
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "HTTP open failed: %s (0x%x), skipping version check", esp_err_to_name(err), err);
+        esp_http_client_close(client);
         esp_http_client_cleanup(client);
-        return true;
+        return VERSION_CHECK_SKIP;
     }
 
     if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) {
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
-        return false;
+        return VERSION_CHECK_ABORT;
     }
 
-    esp_http_client_fetch_headers(client);
-    int sc = esp_http_client_get_status_code(client);
-    ESP_LOGI(TAG, "Version check HTTP %d", sc);
-
-    if (sc != 200 && sc != 206) {
+    int64_t fetch_ret = esp_http_client_fetch_headers(client);
+    if (fetch_ret < 0) {
+        ESP_LOGW(TAG, "HTTP fetch headers failed: %s (%lld), skipping version check",
+                 esp_err_to_name((esp_err_t)fetch_ret), (long long)fetch_ret);
+        int64_t clen = esp_http_client_get_content_length(client);
+        ESP_LOGW(TAG, "  content_length=%lld", (long long)clen);
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
-        return true;
+        return VERSION_CHECK_SKIP;
+    }
+
+    int sc = esp_http_client_get_status_code(client);
+    ESP_LOGI(TAG, "Version check HTTP %d, content_length=%lld", sc,
+             (long long)esp_http_client_get_content_length(client));
+
+    if (sc == 404 || sc == 416 || sc >= 500) {
+        ESP_LOGW(TAG, "HTTP server error: %d, skipping version check", sc);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return VERSION_CHECK_SKIP;
+    }
+
+    if (sc != 200 && sc != 206) {
+        ESP_LOGW(TAG, "Unexpected HTTP status: %d, skipping version check", sc);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return VERSION_CHECK_SKIP;
     }
 
     uint8_t *hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!hdr) hdr = malloc(FW_HEADER_BUF_SIZE);
     if (!hdr) {
-        ESP_LOGE(TAG, "Header alloc failed");
+        ESP_LOGW(TAG, "Header alloc failed, skipping version check");
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
-        return true;
+        return VERSION_CHECK_SKIP;
     }
 
     int total = 0;
@@ -139,23 +227,48 @@ static bool check_version(const char *fw_url, uint8_t gen)
 
     if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) {
         free(hdr);
-        return false;
+        return VERSION_CHECK_ABORT;
     }
 
-    bool proceed = true;
-    if (total >= (int)sizeof(esp_app_desc_t)) {
-        esp_app_desc_t rd;
-        if (find_app_desc(hdr, total, &rd)) {
-            ESP_LOGI(TAG, "Remote firmware: version=%s", rd.version);
-            uint8_t nm, nn, np;
-            if (parse_version(rd.version, &nm, &nn, &np)) {
-                proceed = version_newer(cm, cn, cp, nm, nn, np);
-                ESP_LOGI(TAG, "Remote: %d.%d.%d -> %s", nm, nn, np, proceed ? "update needed" : "up to date");
-            }
-        }
+    if (total < (int)sizeof(esp_app_desc_t)) {
+        ESP_LOGW(TAG, "Header too short (%d bytes), cannot verify version, proceeding", total);
+        free(hdr);
+        return VERSION_CHECK_SKIP;
     }
+
+    esp_app_desc_t rd;
+    if (!find_app_desc(hdr, total, &rd)) {
+        ESP_LOGW(TAG, "Could not find app descriptor in header, skipping version check");
+        free(hdr);
+        return VERSION_CHECK_SKIP;
+    }
+
+    ESP_LOGI(TAG, "Remote firmware: version='%s'", rd.version);
+
+    fw_ver_t rem_ver;
+    fw_ver_parse(rd.version, &rem_ver);
     free(hdr);
-    return proceed;
+
+    if (!rem_ver.valid) {
+        ESP_LOGW(TAG, "Cannot parse remote version '%s', proceeding with download", rd.version);
+        return VERSION_CHECK_SKIP;
+    }
+
+    char rem_str[32];
+    fw_ver_to_string(&rem_ver, rem_str, sizeof(rem_str));
+    ESP_LOGI(TAG, "Remote version parsed: %s (%u segments)", rem_str, rem_ver.nsegs);
+
+    int cmp = fw_ver_compare(&rem_ver, &cur_ver);
+    if (cmp > 0) {
+        ESP_LOGI(TAG, "Remote version %s > current %s, update needed", rem_str, cur_str);
+        return VERSION_CHECK_PROCEED;
+    } else if (cmp == 0) {
+        ESP_LOGI(TAG, "Remote version %s == current %s, already up to date", rem_str, cur_str);
+        return VERSION_CHECK_UP_TO_DATE;
+    } else {
+        ESP_LOGW(TAG, "Remote version %s < current %s, downgrade rejected", rem_str, cur_str);
+        return VERSION_CHECK_DOWNGRADE;
+    }
 }
 
 static void url_task_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error)
@@ -167,7 +280,6 @@ static void url_task_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t e
 
 static void url_task(void *arg)
 {
-    (void)arg;
     uint8_t gen = (uint8_t)(uintptr_t)arg;
     s_url_task = xTaskGetCurrentTaskHandle();
 
@@ -175,15 +287,22 @@ static void url_task(void *arg)
 
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_CHECKING, BLE_OTA_ERR_NONE);
 
-    bool need_update = check_version(s_ota_url, gen);
+    version_check_result_t check_res = check_version(s_ota_url, gen);
 
-    if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) {
+    if (check_res == VERSION_CHECK_ABORT || ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) {
         url_task_finish(gen, BLE_OTA_STATE_ABORTED, BLE_OTA_ERR_ABORTED);
         return;
     }
 
-    if (!need_update) {
-        url_task_finish(gen, BLE_OTA_STATE_CHECK_FAIL, BLE_OTA_ERR_NONE);
+    if (check_res == VERSION_CHECK_DOWNGRADE) {
+        ESP_LOGW(TAG, "Remote firmware is older than current, rejecting downgrade");
+        url_task_finish(gen, BLE_OTA_STATE_CHECK_FAIL, BLE_OTA_ERR_VERSION_DOWNGRADE);
+        return;
+    }
+
+    if (check_res == VERSION_CHECK_UP_TO_DATE) {
+        ESP_LOGI(TAG, "Firmware is already up to date, no update needed");
+        url_task_finish(gen, BLE_OTA_STATE_CHECK_FAIL, BLE_OTA_ERR_VERSION_SAME);
         return;
     }
 
@@ -277,25 +396,10 @@ static void url_task(void *arg)
         ret = esp_https_ota_finish(h);
         if (ret == ESP_OK) {
             ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFY_OK, BLE_OTA_ERR_NONE);
-            ESP_LOGI(TAG, "Verify OK, setting boot partition");
-
-            const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
-            if (target) {
-                ble_srv_ota_set_state(gen, BLE_OTA_STATE_APPLYING, BLE_OTA_ERR_NONE);
-                ret = esp_ota_set_boot_partition(target);
-                if (ret == ESP_OK) {
-                    ESP_LOGI(TAG, "Apply OK");
-                    url_task_finish(gen, BLE_OTA_STATE_APPLY_OK, BLE_OTA_ERR_NONE);
-                    return;
-                } else {
-                    ESP_LOGE(TAG, "Set boot failed: %s", esp_err_to_name(ret));
-                    url_task_finish(gen, BLE_OTA_STATE_APPLY_FAIL, BLE_OTA_ERR_INTERNAL);
-                    return;
-                }
-            } else {
-                url_task_finish(gen, BLE_OTA_STATE_APPLY_FAIL, BLE_OTA_ERR_NO_PARTITION);
-                return;
-            }
+            ble_srv_ota_set_state(gen, BLE_OTA_STATE_APPLYING, BLE_OTA_ERR_NONE);
+            ESP_LOGI(TAG, "Verify and apply OK");
+            url_task_finish(gen, BLE_OTA_STATE_APPLY_OK, BLE_OTA_ERR_NONE);
+            return;
         } else {
             ESP_LOGE(TAG, "Finish failed: %s", esp_err_to_name(ret));
             url_task_finish(gen, BLE_OTA_STATE_VERIFY_FAIL, BLE_OTA_ERR_VERIFY_FAILED);

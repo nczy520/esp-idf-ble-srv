@@ -5,13 +5,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "host/ble_hs.h"
 #include "host/ble_gatt.h"
 
 static const char *TAG = "OTA";
 
+#define RESET_TIMER_MS 300
+
 static SemaphoreHandle_t s_lock = NULL;
+static TimerHandle_t s_reset_timer = NULL;
 
 static volatile ble_ota_mode_t s_mode = BLE_OTA_MODE_NONE;
 static volatile ble_ota_state_t s_state = BLE_OTA_STATE_IDLE;
@@ -27,6 +32,27 @@ static ble_srv_status_cb_t s_status_cb = NULL;
 
 #define OTA_LOCK()     do { if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY); } while(0)
 #define OTA_UNLOCK()   do { if (s_lock) xSemaphoreGive(s_lock); } while(0)
+
+static void do_push_status_locked(void);
+static void reset_timer_cb(TimerHandle_t timer);
+
+static TaskHandle_t s_ota_restart_task = NULL;
+
+static void ota_restart_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    esp_restart();
+    vTaskDelete(NULL);
+}
+
+static void schedule_ota_restart(void)
+{
+    if (s_ota_restart_task) {
+        return;
+    }
+    xTaskCreate(ota_restart_task, "ota_restart", 2048, NULL, 1, &s_ota_restart_task);
+}
 
 static bool is_terminal_state(ble_ota_state_t state)
 {
@@ -49,37 +75,52 @@ static bool gen_valid_locked(uint8_t gen)
 
 static void do_push_status_locked(void)
 {
+    ble_srv_status_cb_t cb = s_status_cb;
+    ble_ota_status_t status;
+    bool has_notify = false;
+
     uint16_t conn_handle = ble_srv_get_conn_handle();
-    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-        return;
-    }
-    if (!g_ota_status_notify_enabled) {
-        return;
-    }
+    if (conn_handle != BLE_HS_CONN_HANDLE_NONE && g_ota_status_notify_enabled) {
+        uint32_t report = (s_bytes_received > s_bytes_written) ? s_bytes_received : s_bytes_written;
+        status.state = (uint8_t)s_state;
+        status.error_code = (uint8_t)s_error;
+        status.fw_size = s_fw_size;
+        status.bytes_written = report;
+        status.progress = (s_fw_size > 0) ? (uint8_t)((report * 100) / s_fw_size) : 0;
+        has_notify = true;
 
-    uint32_t report = (s_bytes_received > s_bytes_written) ? s_bytes_received : s_bytes_written;
-
-    ble_ota_status_t status = {
-        .state         = (uint8_t)s_state,
-        .error_code    = (uint8_t)s_error,
-        .fw_size       = s_fw_size,
-        .bytes_written = report,
-        .progress      = (s_fw_size > 0) ? (uint8_t)((report * 100) / s_fw_size) : 0,
-    };
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(&status, sizeof(status));
-    if (!om) {
-        return;
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(&status, sizeof(status));
+        if (om) {
+            int rc = ble_gatts_notify_custom(conn_handle, g_ota_status_chr_val_handle, om);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "notify failed: rc=%d", rc);
+            }
+        }
     }
 
-    int rc = ble_gatts_notify_custom(conn_handle, g_ota_status_chr_val_handle, om);
-    if (rc != 0) {
-        ESP_LOGW(TAG, "notify failed: rc=%d", rc);
+    if (cb && has_notify) {
+        OTA_UNLOCK();
+        cb(&status);
+        OTA_LOCK();
     }
+}
 
-    if (s_status_cb) {
-        s_status_cb(&status);
+static void reset_timer_cb(TimerHandle_t timer)
+{
+    (void)timer;
+    OTA_LOCK();
+    if (is_terminal_state(s_state)) {
+        ESP_LOGI(TAG, "Terminal state timeout, resetting to IDLE");
+        s_mode = BLE_OTA_MODE_NONE;
+        s_state = BLE_OTA_STATE_IDLE;
+        s_error = BLE_OTA_ERR_NONE;
+        s_abort_requested = false;
+        s_fw_size = 0;
+        s_bytes_received = 0;
+        s_bytes_written = 0;
+        do_push_status_locked();
     }
+    OTA_UNLOCK();
 }
 
 bool ble_srv_ota_init(void)
@@ -89,6 +130,16 @@ bool ble_srv_ota_init(void)
         ESP_LOGE(TAG, "Failed to create lock");
         return false;
     }
+
+    s_reset_timer = xTimerCreate("ota_reset", pdMS_TO_TICKS(RESET_TIMER_MS),
+                                  pdFALSE, NULL, reset_timer_cb);
+    if (!s_reset_timer) {
+        ESP_LOGE(TAG, "Failed to create reset timer");
+        vSemaphoreDelete(s_lock);
+        s_lock = NULL;
+        return false;
+    }
+
     s_mode = BLE_OTA_MODE_NONE;
     s_state = BLE_OTA_STATE_IDLE;
     s_error = BLE_OTA_ERR_NONE;
@@ -104,6 +155,9 @@ bool ble_srv_ota_init(void)
 void ble_srv_ota_deinit(void)
 {
     OTA_LOCK();
+    if (s_reset_timer) {
+        xTimerStop(s_reset_timer, 0);
+    }
     s_abort_requested = true;
     ble_ota_mode_t mode = s_mode;
     s_state = BLE_OTA_STATE_ABORTING;
@@ -120,6 +174,11 @@ void ble_srv_ota_deinit(void)
 
     vTaskDelay(pdMS_TO_TICKS(300));
 
+    if (s_reset_timer) {
+        xTimerDelete(s_reset_timer, portMAX_DELAY);
+        s_reset_timer = NULL;
+    }
+
     if (s_lock) {
         vSemaphoreDelete(s_lock);
         s_lock = NULL;
@@ -134,6 +193,20 @@ uint8_t ble_srv_ota_begin(ble_ota_mode_t mode)
     }
 
     OTA_LOCK();
+
+    if (s_reset_timer) {
+        xTimerStop(s_reset_timer, 0);
+    }
+
+    if (is_terminal_state(s_state)) {
+        s_mode = BLE_OTA_MODE_NONE;
+        s_state = BLE_OTA_STATE_IDLE;
+        s_error = BLE_OTA_ERR_NONE;
+        s_abort_requested = false;
+        s_fw_size = 0;
+        s_bytes_received = 0;
+        s_bytes_written = 0;
+    }
 
     if (s_state != BLE_OTA_STATE_IDLE) {
         ESP_LOGW(TAG, "begin: OTA busy, mode=%d, state=%d", s_mode, s_state);
@@ -222,19 +295,16 @@ void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error
     s_error = error;
     s_abort_requested = false;
 
-    do_push_status_locked();
-
     if (is_terminal) {
         s_mode = BLE_OTA_MODE_NONE;
-        s_state = BLE_OTA_STATE_IDLE;
-        s_error = BLE_OTA_ERR_NONE;
         s_abort_requested = false;
-        s_fw_size = 0;
-        s_bytes_received = 0;
-        s_bytes_written = 0;
-
-        do_push_status_locked();
+        if (s_reset_timer) {
+            xTimerReset(s_reset_timer, 0);
+            xTimerStart(s_reset_timer, 0);
+        }
     }
+
+    do_push_status_locked();
 
     OTA_UNLOCK();
 
@@ -244,8 +314,7 @@ void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error
 
     if (is_apply_ok) {
         ESP_LOGI(TAG, "OTA apply OK, rebooting in 3s...");
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        esp_restart();
+        schedule_ota_restart();
     }
 }
 

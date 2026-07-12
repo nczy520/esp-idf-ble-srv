@@ -47,10 +47,9 @@ static void bt_cleanup(void)
 
 static void bt_flush_and_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error)
 {
-    (void)result;
     bt_cleanup();
     s_gen = BLE_OTA_INVALID_GEN;
-    ble_srv_ota_finish(gen, BLE_OTA_STATE_ABORTED, error);
+    ble_srv_ota_finish(gen, result, error);
 }
 
 void ble_srv_ota_bt_handle_abort(void)

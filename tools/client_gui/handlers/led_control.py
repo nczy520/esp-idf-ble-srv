@@ -18,7 +18,7 @@ class LEDControlHandler(BaseHandler):
         self.ui.r_slider.value = 255
         self.ui.g_slider.value = 255
         self.ui.b_slider.value = 255
-        self.page.update()
+        self.safe_update()
 
     def color_changed(self, event=None):
         """颜色滑块变化"""
@@ -27,7 +27,7 @@ class LEDControlHandler(BaseHandler):
             g = int(self.ui.g_slider.value)
             b = int(self.ui.b_slider.value)
             self.ui.color_box.bgcolor = f"#{r:02x}{g:02x}{b:02x}"
-            self.page.update()
+            self.safe_update()
         except Exception:
             pass
 
@@ -61,7 +61,7 @@ class LEDControlHandler(BaseHandler):
             else:
                 self.log("LED状态: 关", "info")
                 self.ui.led_status_text.value = "状态: 关 ○"
-            self.page.update()
+            self.safe_update()
         self._run_with_loading(btn, self.ble.led_status(), callback, loading_text="查询中...")
 
     def led_set_color(self, event=None):

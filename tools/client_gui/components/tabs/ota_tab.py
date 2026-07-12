@@ -61,9 +61,9 @@ class OTATabComponent(BaseTabComponent):
             icon=ft.Icons.STOP,
             on_click=lambda e: self.safe_call("abort_ota", e),
             disabled=True,
-            bgcolor=ft.Colors.RED,
+            bgcolor=ft.Colors.RED_700,
             color=ft.Colors.WHITE,
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6)),
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6), padding=ft.padding.Padding(16, 0, 16, 0)),
         )
         self.ota_url_btn = self._action_btn("URL升级", ft.Icons.CLOUD_DOWNLOAD, "start_ota_url")
         self.ota_default_btn = self._action_btn("默认URL", ft.Icons.CLOUD, "start_ota_default")

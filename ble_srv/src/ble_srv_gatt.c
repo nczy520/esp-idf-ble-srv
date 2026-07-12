@@ -15,6 +15,24 @@
 #include "host/ble_hs.h"
 #include "host/ble_gatt.h"
 
+static TaskHandle_t s_gatt_restart_task = NULL;
+
+static void gatt_delayed_restart(void *arg)
+{
+    uint32_t delay_ms = (uint32_t)(uintptr_t)arg;
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    esp_restart();
+    vTaskDelete(NULL);
+}
+
+static void gatt_schedule_restart(uint32_t delay_ms)
+{
+    if (s_gatt_restart_task) {
+        return;
+    }
+    xTaskCreate(gatt_delayed_restart, "gatt_restart", 2048, (void *)(uintptr_t)delay_ms, 1, &s_gatt_restart_task);
+}
+
 static const char *TAG = "BLE_SRV_GATT";
 
 static uint8_t s_partition_index = 0;
@@ -380,8 +398,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             ESP_LOGI(TAG, "SRV command: 0x%02X", cmd);
             switch (cmd) {
             case BLE_SRV_CMD_RESTART:
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_restart();
+                gatt_schedule_restart(100);
                 break;
             default:
                 break;
@@ -399,8 +416,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             if (om) {
                 ble_gatts_notify_custom(conn_handle, g_srv_restart_chr_val_handle, om);
             }
-            vTaskDelay(pdMS_TO_TICKS(500));
-            esp_restart();
+            gatt_schedule_restart(500);
         }
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED
         else if (attr_handle == g_wifi_config_chr_val_handle) {
