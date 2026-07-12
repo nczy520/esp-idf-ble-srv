@@ -189,10 +189,16 @@ static void effect_strobe(uint8_t r, uint8_t g, uint8_t b, uint8_t speed)
 static void ble_srv_led_effect_task(void *arg)
 {
     (void)arg;
+    TaskHandle_t self_handle = xTaskGetCurrentTaskHandle();
     uint8_t r = 0, g = 0, b = 0, speed = 50;
     ble_led_effect_t effect = BLE_LED_EFFECT_NONE;
+    ble_led_effect_t last_effect = BLE_LED_EFFECT_NONE;
 
     while (1) {
+        if (s_effect_task != self_handle) {
+            break;
+        }
+
         if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
             r = s_red;
             g = s_green;
@@ -205,7 +211,10 @@ static void ble_srv_led_effect_task(void *arg)
             continue;
         }
 
-        ESP_LOGI(TAG, "Effect running: effect=%d, speed=%d", effect, speed);
+        if (effect != last_effect) {
+            ESP_LOGI(TAG, "Effect running: effect=%d, speed=%d", effect, speed);
+            last_effect = effect;
+        }
 
         switch (effect) {
         case BLE_LED_EFFECT_BREATH:
@@ -221,11 +230,12 @@ static void ble_srv_led_effect_task(void *arg)
             effect_strobe(r, g, b, speed);
             break;
         default:
-            s_effect_task = NULL;
-            vTaskDelete(NULL);
-            return;
+            break;
         }
     }
+
+    s_effect_task = NULL;
+    vTaskDelete(NULL);
 }
 
 static void ble_srv_led_start_effect(void)

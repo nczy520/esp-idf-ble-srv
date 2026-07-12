@@ -79,6 +79,7 @@ class BleCore:
         self.ble_client = None
         self.device_address = None
         self.device_name = None
+        self.connected_time = None
         self.ota_status = None
         self._is_connected = False
         self._log_callback = None
@@ -298,6 +299,7 @@ class BleCore:
 
     def _handle_disconnect(self):
         self._is_connected = False
+        self.connected_time = None
         self._ota_notify_started = False
         self._reset_ota_state()
         if not self._restart_in_progress:
@@ -323,6 +325,17 @@ class BleCore:
     @property
     def connected(self):
         return self._is_connected and self.ble_client is not None and self.ble_client.is_connected
+
+    def get_connection_duration_str(self):
+        if self.connected_time is None:
+            return None
+        elapsed = time.time() - self.connected_time
+        hours = int(elapsed // 3600)
+        minutes = int((elapsed % 3600) // 60)
+        seconds = int(elapsed % 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
 
     async def scan_devices(self, timeout=5, name_filter=None, on_device_found=None):
         devices = []
@@ -372,6 +385,7 @@ class BleCore:
             self.ble_client = BleakClient(address, disconnected_callback=handler, use_cached=False)
             await self.ble_client.connect()
             self._is_connected = True
+            self.connected_time = time.time()
             mtu = self.ble_client.mtu_size if hasattr(self.ble_client, "mtu_size") else 247
             self._log(f"连接成功: {name} (MTU={mtu})", "success")
             return True, mtu
@@ -412,6 +426,7 @@ class BleCore:
         self._is_connected = False
         self.device_address = None
         self.device_name = None
+        self.connected_time = None
         self.ble_client = None
         self._log("已断开连接", "info")
         return True

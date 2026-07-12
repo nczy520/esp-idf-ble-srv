@@ -36,22 +36,20 @@ static ble_srv_status_cb_t s_status_cb = NULL;
 static void do_push_status_locked(void);
 static void reset_timer_cb(TimerHandle_t timer);
 
-static TaskHandle_t s_ota_restart_task = NULL;
+static TimerHandle_t s_ota_restart_timer = NULL;
 
-static void ota_restart_task(void *arg)
+static void ota_restart_timer_cb(TimerHandle_t timer)
 {
-    (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(3000));
+    (void)timer;
     esp_restart();
-    vTaskDelete(NULL);
 }
 
 static void schedule_ota_restart(void)
 {
-    if (s_ota_restart_task) {
-        return;
+    if (s_ota_restart_timer) {
+        xTimerReset(s_ota_restart_timer, 0);
+        xTimerStart(s_ota_restart_timer, 0);
     }
-    xTaskCreate(ota_restart_task, "ota_restart", 2048, NULL, 1, &s_ota_restart_task);
 }
 
 static bool is_terminal_state(ble_ota_state_t state)
@@ -140,6 +138,17 @@ bool ble_srv_ota_init(void)
         return false;
     }
 
+    s_ota_restart_timer = xTimerCreate("ota_rboot", pdMS_TO_TICKS(3000),
+                                        pdFALSE, NULL, ota_restart_timer_cb);
+    if (!s_ota_restart_timer) {
+        ESP_LOGE(TAG, "Failed to create restart timer");
+        xTimerDelete(s_reset_timer, portMAX_DELAY);
+        vSemaphoreDelete(s_lock);
+        s_reset_timer = NULL;
+        s_lock = NULL;
+        return false;
+    }
+
     s_mode = BLE_OTA_MODE_NONE;
     s_state = BLE_OTA_STATE_IDLE;
     s_error = BLE_OTA_ERR_NONE;
@@ -157,6 +166,9 @@ void ble_srv_ota_deinit(void)
     OTA_LOCK();
     if (s_reset_timer) {
         xTimerStop(s_reset_timer, 0);
+    }
+    if (s_ota_restart_timer) {
+        xTimerStop(s_ota_restart_timer, 0);
     }
     s_abort_requested = true;
     ble_ota_mode_t mode = s_mode;
@@ -177,6 +189,11 @@ void ble_srv_ota_deinit(void)
     if (s_reset_timer) {
         xTimerDelete(s_reset_timer, portMAX_DELAY);
         s_reset_timer = NULL;
+    }
+
+    if (s_ota_restart_timer) {
+        xTimerDelete(s_ota_restart_timer, portMAX_DELAY);
+        s_ota_restart_timer = NULL;
     }
 
     if (s_lock) {
@@ -320,7 +337,10 @@ void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error
 
 bool ble_srv_ota_is_abort_requested(void)
 {
-    return s_abort_requested;
+    OTA_LOCK();
+    bool abort_req = s_abort_requested;
+    OTA_UNLOCK();
+    return abort_req;
 }
 
 bool ble_srv_ota_is_active(void)
@@ -349,12 +369,18 @@ ble_ota_state_t ble_srv_ota_get_state(void)
 
 uint8_t ble_srv_ota_get_current_gen(void)
 {
-    return s_session_gen;
+    OTA_LOCK();
+    uint8_t gen = s_session_gen;
+    OTA_UNLOCK();
+    return gen;
 }
 
 bool ble_srv_ota_gen_valid(uint8_t gen)
 {
-    return gen != BLE_OTA_INVALID_GEN && gen == s_session_gen;
+    OTA_LOCK();
+    bool valid = gen_valid_locked(gen);
+    OTA_UNLOCK();
+    return valid;
 }
 
 void ble_srv_ota_set_state(uint8_t gen, ble_ota_state_t state, ble_ota_err_t error)
@@ -426,5 +452,7 @@ bool ble_srv_ota_get_status(ble_ota_status_t *status)
 
 void ble_srv_ota_register_status_cb(ble_srv_status_cb_t cb)
 {
+    OTA_LOCK();
     s_status_cb = cb;
+    OTA_UNLOCK();
 }

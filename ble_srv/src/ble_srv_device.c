@@ -14,17 +14,16 @@
 #include "esp_private/esp_clk.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 
 static const char *TAG = "BLE_SRV_DEVICE";
 
-static TaskHandle_t s_restart_task_handle = NULL;
+static TimerHandle_t s_restart_timer = NULL;
 
-static void delayed_restart_task(void *arg)
+static void restart_timer_cb(TimerHandle_t timer)
 {
-    uint32_t delay_ms = (uint32_t)(uintptr_t)arg;
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    (void)timer;
     esp_restart();
-    vTaskDelete(NULL);
 }
 
 bool ble_srv_get_device_info(ble_srv_device_info_t *info)
@@ -250,8 +249,12 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
 void ble_srv_restart_device(void)
 {
     ESP_LOGI(TAG, "Restarting device...");
-    if (s_restart_task_handle) {
-        return;
+    if (!s_restart_timer) {
+        s_restart_timer = xTimerCreate("dev_rboot", pdMS_TO_TICKS(100),
+                                        pdFALSE, NULL, restart_timer_cb);
     }
-    xTaskCreate(delayed_restart_task, "dev_restart", 2048, (void *)(uintptr_t)100, 1, &s_restart_task_handle);
+    if (s_restart_timer) {
+        xTimerReset(s_restart_timer, 0);
+        xTimerStart(s_restart_timer, 0);
+    }
 }

@@ -18,6 +18,48 @@ class ConnectionHandler(BaseHandler):
         self.scan_lock = False
         self._device_rssi_controls = {}
         self._device_connect_btns = {}
+        self._conn_time_task = None
+        self._selected_device_name = None
+        self._selected_device_addr = None
+
+    def _format_conn_status_text(self):
+        """格式化状态栏设备信息文本，包含连接时长"""
+        if not self._selected_device_name or not self._selected_device_addr:
+            return "未选择设备"
+        dur = self.ble.get_connection_duration_str()
+        if dur:
+            return f"{self._selected_device_name} | {self._selected_device_addr} | {dur}"
+        return f"{self._selected_device_name} | {self._selected_device_addr}"
+
+    async def _update_conn_time_loop(self):
+        """连接时间定时更新协程"""
+        try:
+            while self.ble.connected and self.ble.connected_time is not None:
+                self.ui.status_text.value = self._format_conn_status_text()
+                try:
+                    self.page.update(self.ui.status_text)
+                except Exception:
+                    break
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    def _start_conn_time_updater(self):
+        """启动连接时间更新器"""
+        self._stop_conn_time_updater()
+        if self.page:
+            self._conn_time_task = self.page.run_task(self._update_conn_time_loop)
+
+    def _stop_conn_time_updater(self):
+        """停止连接时间更新器"""
+        if self._conn_time_task:
+            try:
+                self._conn_time_task.cancel()
+            except Exception:
+                pass
+            self._conn_time_task = None
 
     def update_connection_ui(self, connected):
         """更新连接状态UI"""
@@ -25,6 +67,11 @@ class ConnectionHandler(BaseHandler):
         connected_address = device.get('address') if device else None
         
         if connected:
+            if device:
+                self._selected_device_name = device.get('name', 'Unknown')
+                self._selected_device_addr = device.get('address', '')
+                self.ui.status_text.value = self._format_conn_status_text()
+                self.ui.status_text.color = ft.Colors.ON_SURFACE
             self.ui.status_badge.content = ft.Row([
                 ft.Icon(ft.Icons.CIRCLE, size=10, color=ft.Colors.GREEN),
                 ft.Text("已连接", size=12, color=ft.Colors.GREEN, weight=ft.FontWeight.W_500),
@@ -36,7 +83,12 @@ class ConnectionHandler(BaseHandler):
             self.ui.connect_toggle_btn.bgcolor = ft.Colors.RED_700
             self.ui.connect_toggle_btn.disabled = False
             self._set_overlays_visible(False)
+            self._start_conn_time_updater()
         else:
+            self._stop_conn_time_updater()
+            if self._selected_device_name and self._selected_device_addr:
+                self.ui.status_text.value = f"{self._selected_device_name} | {self._selected_device_addr}"
+                self.ui.status_text.color = ft.Colors.ON_SURFACE
             self.ui.status_badge.content = ft.Row([
                 ft.Icon(ft.Icons.CIRCLE, size=10, color=ft.Colors.RED_400),
                 ft.Text("未连接", size=12, color=ft.Colors.RED_400, weight=ft.FontWeight.W_500),
@@ -202,6 +254,8 @@ class ConnectionHandler(BaseHandler):
                 self.handle_disconnect()
             else:
                 self.ble.selected_device_info = device
+                self._selected_device_name = device['name']
+                self._selected_device_addr = device['address']
                 self.ui.status_text.value = f"{device['name']} | {device['address']}"
                 self.ui.status_text.color = ft.Colors.ON_SURFACE
                 self.ui.connect_toggle_btn.disabled = False
@@ -215,6 +269,8 @@ class ConnectionHandler(BaseHandler):
         if idx < len(self.devices):
             device = self.devices[idx]
             self.ble.selected_device_info = device
+            self._selected_device_name = device['name']
+            self._selected_device_addr = device['address']
             self.ui.status_text.value = f"{device['name']} | {device['address']}"
             self.ui.status_text.color = ft.Colors.ON_SURFACE
             self.ui.connect_toggle_btn.disabled = False

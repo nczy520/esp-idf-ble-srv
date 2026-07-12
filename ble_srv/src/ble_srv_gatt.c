@@ -9,28 +9,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "freertos/timers.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "host/ble_hs.h"
 #include "host/ble_gatt.h"
 
-static TaskHandle_t s_gatt_restart_task = NULL;
+static TimerHandle_t s_gatt_restart_timer = NULL;
 
-static void gatt_delayed_restart(void *arg)
+static void gatt_restart_timer_cb(TimerHandle_t timer)
 {
-    uint32_t delay_ms = (uint32_t)(uintptr_t)arg;
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    (void)timer;
     esp_restart();
-    vTaskDelete(NULL);
 }
 
 static void gatt_schedule_restart(uint32_t delay_ms)
 {
-    if (s_gatt_restart_task) {
+    if (!s_gatt_restart_timer) {
+        s_gatt_restart_timer = xTimerCreate("gatt_rboot", pdMS_TO_TICKS(delay_ms),
+                                             pdFALSE, NULL, gatt_restart_timer_cb);
+        if (s_gatt_restart_timer) {
+            xTimerStart(s_gatt_restart_timer, 0);
+        }
         return;
     }
-    xTaskCreate(gatt_delayed_restart, "gatt_restart", 2048, (void *)(uintptr_t)delay_ms, 1, &s_gatt_restart_task);
+    xTimerChangePeriod(s_gatt_restart_timer, pdMS_TO_TICKS(delay_ms), 0);
+    xTimerReset(s_gatt_restart_timer, 0);
+    xTimerStart(s_gatt_restart_timer, 0);
 }
 
 static const char *TAG = "BLE_SRV_GATT";
