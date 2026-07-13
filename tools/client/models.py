@@ -55,17 +55,17 @@ class DeviceInfo:
     }
 
     def __init__(self, data: bytes) -> None:
-        self.chip_name: str = struct.unpack('<32s', data[0:32])[0].decode('utf-8').strip('\x00')
-        self.chip_model: str = struct.unpack('<16s', data[32:48])[0].decode('utf-8').strip('\x00')
-        self.flash_size: str = struct.unpack('<16s', data[48:64])[0].decode('utf-8').strip('\x00')
-        self.mac_address: str = struct.unpack('<18s', data[64:82])[0].decode('utf-8').strip('\x00')
-        self.version: str = struct.unpack('<32s', data[82:114])[0].decode('utf-8').strip('\x00')
-        self.cpu_freq_mhz: int = struct.unpack('<I', data[114:118])[0]
-        self.temperature_celsius: float = struct.unpack('<f', data[118:122])[0]
-        self.temp_sensor_supported: bool = bool(struct.unpack('<B', data[122:123])[0])
-        self.reset_reason: int = struct.unpack('<B', data[123:124])[0]
-        self.uptime_seconds: int = struct.unpack('<I', data[124:128])[0] if len(data) >= 128 else 0
-        self.cpu_cores: int = struct.unpack('<B', data[128:129])[0] if len(data) >= 129 else 0
+        self.cpu_freq_mhz: int = struct.unpack('<I', data[0:4])[0]
+        self.uptime_seconds: int = struct.unpack('<I', data[4:8])[0]
+        self.temperature_celsius: float = struct.unpack('<f', data[8:12])[0]
+        self.temp_sensor_supported: bool = bool(struct.unpack('<B', data[12:13])[0])
+        self.reset_reason: int = struct.unpack('<B', data[13:14])[0]
+        self.cpu_cores: int = struct.unpack('<B', data[14:15])[0]
+        self.chip_name: str = struct.unpack('<32s', data[15:47])[0].decode('utf-8', errors='replace').strip('\x00')
+        self.chip_model: str = struct.unpack('<16s', data[47:63])[0].decode('utf-8', errors='replace').strip('\x00')
+        self.flash_size: str = struct.unpack('<16s', data[63:79])[0].decode('utf-8', errors='replace').strip('\x00')
+        self.mac_address: str = struct.unpack('<18s', data[79:97])[0].decode('utf-8', errors='replace').strip('\x00')
+        self.version: str = struct.unpack('<32s', data[97:129])[0].decode('utf-8', errors='replace').strip('\x00')
 
     def get_reset_reason_name(self) -> str:
         return self.RESET_REASONS.get(self.reset_reason, f"未知({self.reset_reason})")
@@ -144,7 +144,7 @@ class CPUInfo:
         self.cpu_cores: int = struct.unpack('<B', data[14:15])[0] if len(data) >= 15 else 0
         self.cpu_usage: int = struct.unpack('<B', data[15:16])[0] if len(data) >= 16 else 0
         self.chip_revision: int = struct.unpack('<B', data[16:17])[0] if len(data) >= 17 else 0
-        self.idf_version: str = struct.unpack('<24s', data[17:41])[0].decode('utf-8').strip('\x00') if len(data) >= 41 else ""
+        self.idf_version: str = struct.unpack('<24s', data[17:41])[0].decode('utf-8', errors='replace').strip('\x00') if len(data) >= 41 else ""
         self._legacy = len(data) < 41
 
     def _get_feature_list(self) -> str:
@@ -170,9 +170,9 @@ class FlashInfo:
     def __init__(self, data: bytes) -> None:
         self.flash_total: int = struct.unpack('<I', data[0:4])[0]
         self.flash_free: int = struct.unpack('<I', data[4:8])[0]
-        self.partition_count: int = struct.unpack('<B', data[8:9])[0]
-        self.flash_speed_mhz: int = struct.unpack('<B', data[9:10])[0] if len(data) >= 10 else 0
-        self.running_partition: str = struct.unpack('<16s', data[10:26])[0].decode('utf-8').strip('\x00') if len(data) >= 26 else ""
+        self.flash_speed_mhz: int = struct.unpack('<B', data[8:9])[0]
+        self.partition_count: int = struct.unpack('<B', data[9:10])[0]
+        self.running_partition: str = struct.unpack('<16s', data[10:26])[0].decode('utf-8', errors='replace').strip('\x00') if len(data) >= 26 else ""
         self._legacy = len(data) < 26
 
     @staticmethod
@@ -197,11 +197,11 @@ class FlashInfo:
 
 class PartitionInfo:
     def __init__(self, data: bytes) -> None:
-        self.label: str = struct.unpack('<16s', data[0:16])[0].decode('utf-8').strip('\x00')
-        self.address: int = struct.unpack('<I', data[16:20])[0]
-        self.size: int = struct.unpack('<I', data[20:24])[0]
-        self.type: int = struct.unpack('<B', data[24:25])[0]
-        self.subtype: int = struct.unpack('<B', data[25:26])[0]
+        self.address: int = struct.unpack('<I', data[0:4])[0]
+        self.size: int = struct.unpack('<I', data[4:8])[0]
+        self.type: int = struct.unpack('<B', data[8:9])[0]
+        self.subtype: int = struct.unpack('<B', data[9:10])[0]
+        self.label: str = struct.unpack('<16s', data[10:26])[0].decode('utf-8', errors='replace').strip('\x00')
 
     def get_type_name(self) -> str:
         types = {0: 'app', 1: 'data'}
@@ -221,10 +221,10 @@ class PartitionInfo:
 
 class OTAStatus:
     def __init__(self, data: bytes) -> None:
-        self.state: int = struct.unpack('<B', data[0:1])[0]
-        self.error_code: int = struct.unpack('<B', data[1:2])[0]
-        self.fw_size: int = struct.unpack('<I', data[2:6])[0]
-        self.bytes_written: int = struct.unpack('<I', data[6:10])[0]
+        self.fw_size: int = struct.unpack('<I', data[0:4])[0]
+        self.bytes_written: int = struct.unpack('<I', data[4:8])[0]
+        self.state: int = struct.unpack('<B', data[8:9])[0]
+        self.error_code: int = struct.unpack('<B', data[9:10])[0]
         self.progress: int = struct.unpack('<B', data[10:11])[0]
 
     def __str__(self) -> str:
@@ -264,9 +264,9 @@ class OTAStatus:
 
 class WiFiStatus:
     def __init__(self, data: bytes) -> None:
-        self.connected: bool = bool(struct.unpack('<B', data[0:1])[0])
-        self.rssi: int = struct.unpack('<B', data[1:2])[0]
-        self.ip_address: int = struct.unpack('<I', data[2:6])[0]
+        self.ip_address: int = struct.unpack('<I', data[0:4])[0]
+        self.connected: bool = bool(struct.unpack('<B', data[4:5])[0])
+        self.rssi: int = struct.unpack('<B', data[5:6])[0]
 
     def __str__(self) -> str:
         if self.connected:

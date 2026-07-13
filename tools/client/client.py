@@ -53,12 +53,6 @@ from .models import (
     OTAStatus, OTAState, OTAError, WiFiStatus,
 )
 
-WIFI_SSID_LEN = 33
-WIFI_PASS_LEN = 65
-DEVICE_INFO_LEN = 123
-TEMP_OFFSET = 118
-TEMP_SUPPORTED_OFFSET = 122
-
 ERROR_NAMES = {
     OTAError.NONE: "无错误",
     OTAError.INVALID_CMD: "无效命令",
@@ -362,17 +356,12 @@ class BLEDeviceClient:
             return False
 
     async def read_temperature(self):
-        data = await self._read_gatt(BLE_DM_INFO_CHAR_UUID, "设备信息")
-        if not data:
+        info = await self.read_device_info()
+        if not info:
             return None
-        if len(data) < DEVICE_INFO_LEN:
-            print(f"设备信息数据长度不足（{len(data)}字节，需{DEVICE_INFO_LEN}字节），请升级固件")
-            return None
-        temp = struct.unpack('<f', data[TEMP_OFFSET:TEMP_OFFSET+4])[0]
-        supported = struct.unpack('<B', data[TEMP_SUPPORTED_OFFSET:TEMP_SUPPORTED_OFFSET+1])[0]
-        if not supported:
+        if not info.temp_sensor_supported:
             return -999.0
-        return temp
+        return info.temperature_celsius
 
     async def led_on(self):
         if await self._write_gatt(BLE_LED_CTRL_CHAR_UUID, bytes([BLE_LED_CTRL_ON]), name="LED"):
@@ -420,16 +409,16 @@ class BLEDeviceClient:
         return False
 
     async def wifi_connect(self, ssid, password):
-        ssid_bytes = ssid.encode('utf-8')[:WIFI_SSID_LEN-1]
-        pass_bytes = password.encode('utf-8')[:WIFI_PASS_LEN-1]
-        cmd = ssid_bytes.ljust(WIFI_SSID_LEN, b'\x00') + pass_bytes.ljust(WIFI_PASS_LEN, b'\x00')
+        ssid_bytes = ssid.encode('utf-8')[:32]
+        pass_bytes = password.encode('utf-8')[:64]
+        cmd = bytes([len(ssid_bytes)]) + ssid_bytes + bytes([len(pass_bytes)]) + pass_bytes
         if await self._write_gatt(BLE_WIFI_CONFIG_CHAR_UUID, cmd, name="WiFi配置"):
             print(f"WiFi连接命令已发送 (SSID: {ssid})")
             return True
         return False
 
     async def wifi_disconnect(self):
-        cmd = b'\x00' * (WIFI_SSID_LEN + WIFI_PASS_LEN)
+        cmd = b'\x00\x00'
         if await self._write_gatt(BLE_WIFI_CONFIG_CHAR_UUID, cmd, name="WiFi断开"):
             print("WiFi断开命令已发送")
             return True

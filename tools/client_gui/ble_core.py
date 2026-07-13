@@ -635,15 +635,16 @@ class BleCore:
         return True
 
     async def wifi_connect(self, ssid, password):
-        ssid_bytes = ssid.encode('utf-8')[:32].ljust(33, b'\x00')
-        pass_bytes = password.encode('utf-8')[:64].ljust(65, b'\x00')
-        await self._write_gatt(BLE_WIFI_CONFIG_CHAR_UUID, ssid_bytes + pass_bytes)
+        ssid_bytes = ssid.encode('utf-8')[:32]
+        pass_bytes = password.encode('utf-8')[:64]
+        cmd = bytes([len(ssid_bytes)]) + ssid_bytes + bytes([len(pass_bytes)]) + pass_bytes
+        await self._write_gatt(BLE_WIFI_CONFIG_CHAR_UUID, cmd)
         self._log(f"WiFi 连接命令已发送: {ssid}", "success")
         return True
 
     async def wifi_disconnect(self):
-        empty_data = b'\x00' * 98
-        await self._write_gatt(BLE_WIFI_CONFIG_CHAR_UUID, empty_data)
+        cmd = b'\x00\x00'
+        await self._write_gatt(BLE_WIFI_CONFIG_CHAR_UUID, cmd)
         self._log("WiFi 断开命令已发送", "success")
         return True
 
