@@ -60,10 +60,10 @@ typedef enum {
 } ble_ota_mode_t;
 
 typedef struct __attribute__((packed)) {
-    uint8_t state;
-    uint8_t error_code;
     uint32_t fw_size;
     uint32_t bytes_written;
+    uint8_t state;
+    uint8_t error_code;
     uint8_t progress;
 } ble_ota_status_t;
 

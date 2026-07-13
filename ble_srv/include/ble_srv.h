@@ -20,6 +20,7 @@ bool ble_srv_init(void);
 void ble_srv_deinit(void);
 bool ble_srv_is_connected(void);
 void ble_srv_restart_device(void);
+void ble_srv_schedule_restart(uint32_t delay_ms);
 uint16_t ble_srv_get_conn_handle(void);
 
 #ifdef __cplusplus

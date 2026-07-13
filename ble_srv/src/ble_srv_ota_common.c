@@ -1,4 +1,6 @@
 #include "ble_srv_ota_common.h"
+#include "ble_srv_ota_bt.h"
+#include "ble_srv_ota_url.h"
 #include "ble_srv_gatt.h"
 #include "ble_srv.h"
 #include <string.h>
@@ -34,22 +36,6 @@ static ble_srv_status_cb_t s_status_cb = NULL;
 static void do_push_status_locked(void);
 static void reset_timer_cb(TimerHandle_t timer);
 
-static TimerHandle_t s_ota_restart_timer = NULL;
-
-static void ota_restart_timer_cb(TimerHandle_t timer)
-{
-    (void)timer;
-    esp_restart();
-}
-
-static void schedule_ota_restart(void)
-{
-    if (s_ota_restart_timer) {
-        xTimerReset(s_ota_restart_timer, 0);
-        xTimerStart(s_ota_restart_timer, 0);
-    }
-}
-
 static bool is_terminal_state(ble_ota_state_t state)
 {
     switch (state) {
@@ -76,7 +62,8 @@ static void do_push_status_locked(void)
     bool has_notify = false;
 
     uint16_t conn_handle = ble_srv_get_conn_handle();
-    if (conn_handle != BLE_HS_CONN_HANDLE_NONE && g_ota_status_notify_enabled) {
+    uint16_t ota_status_handle = ble_srv_gatt_get_ota_status_chr_val_handle();
+    if (conn_handle != BLE_HS_CONN_HANDLE_NONE && ble_srv_gatt_get_ota_status_notify_enabled()) {
         uint32_t report = (s_bytes_received > s_bytes_written) ? s_bytes_received : s_bytes_written;
         status.state = (uint8_t)s_state;
         status.error_code = (uint8_t)s_error;
@@ -87,7 +74,7 @@ static void do_push_status_locked(void)
 
         struct os_mbuf *om = ble_hs_mbuf_from_flat(&status, sizeof(status));
         if (om) {
-            int rc = ble_gatts_notify_custom(conn_handle, g_ota_status_chr_val_handle, om);
+            int rc = ble_gatts_notify_custom(conn_handle, ota_status_handle, om);
             if (rc != 0) {
                 ESP_LOGW(TAG, "notify failed: rc=%d", rc);
             }
@@ -136,17 +123,6 @@ bool ble_srv_ota_init(void)
         return false;
     }
 
-    s_ota_restart_timer = xTimerCreate("ota_rboot", pdMS_TO_TICKS(BLE_OTA_RESTART_DELAY_MS),
-                                        pdFALSE, NULL, ota_restart_timer_cb);
-    if (!s_ota_restart_timer) {
-        ESP_LOGE(TAG, "Failed to create restart timer");
-        xTimerDelete(s_reset_timer, portMAX_DELAY);
-        vSemaphoreDelete(s_lock);
-        s_reset_timer = NULL;
-        s_lock = NULL;
-        return false;
-    }
-
     s_mode = BLE_OTA_MODE_NONE;
     s_state = BLE_OTA_STATE_IDLE;
     s_error = BLE_OTA_ERR_NONE;
@@ -165,9 +141,6 @@ void ble_srv_ota_deinit(void)
     if (s_reset_timer) {
         xTimerStop(s_reset_timer, 0);
     }
-    if (s_ota_restart_timer) {
-        xTimerStop(s_ota_restart_timer, 0);
-    }
     s_abort_requested = true;
     ble_ota_mode_t mode = s_mode;
     s_state = BLE_OTA_STATE_ABORTING;
@@ -175,10 +148,8 @@ void ble_srv_ota_deinit(void)
     OTA_UNLOCK();
 
     if (mode == BLE_OTA_MODE_BT) {
-        extern void ble_srv_ota_bt_handle_abort(void);
         ble_srv_ota_bt_handle_abort();
     } else if (mode == BLE_OTA_MODE_URL) {
-        extern void ble_srv_ota_url_handle_abort(void);
         ble_srv_ota_url_handle_abort();
     }
 
@@ -187,11 +158,6 @@ void ble_srv_ota_deinit(void)
     if (s_reset_timer) {
         xTimerDelete(s_reset_timer, portMAX_DELAY);
         s_reset_timer = NULL;
-    }
-
-    if (s_ota_restart_timer) {
-        xTimerDelete(s_ota_restart_timer, portMAX_DELAY);
-        s_ota_restart_timer = NULL;
     }
 
     if (s_lock) {
@@ -279,10 +245,8 @@ void ble_srv_ota_abort(ble_ota_err_t reason)
     ESP_LOGW(TAG, "OTA abort requested, reason=%d, prev_state=%d, mode=%d", reason, prev_state, mode);
 
     if (mode == BLE_OTA_MODE_BT) {
-        extern void ble_srv_ota_bt_handle_abort(void);
         ble_srv_ota_bt_handle_abort();
     } else if (mode == BLE_OTA_MODE_URL) {
-        extern void ble_srv_ota_url_handle_abort(void);
         ble_srv_ota_url_handle_abort();
     }
 }
@@ -329,7 +293,7 @@ void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error
 
     if (is_apply_ok) {
         ESP_LOGI(TAG, "OTA apply OK, rebooting in 3s...");
-        schedule_ota_restart();
+        ble_srv_schedule_restart(BLE_OTA_RESTART_DELAY_MS);
     }
 }
 

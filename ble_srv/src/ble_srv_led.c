@@ -207,21 +207,27 @@ static void ble_srv_led_effect_task(void *arg)
     ble_led_effect_t last_effect = BLE_LED_EFFECT_NONE;
 
     while (1) {
-        if (s_effect_task != self_handle) {
-            break;
-        }
-
+        bool should_exit = false;
         if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) == pdTRUE) {
-            r = s_red;
-            g = s_green;
-            b = s_blue;
-            speed = s_speed;
-            effect = s_effect;
+            if (s_effect_task != self_handle) {
+                should_exit = true;
+            }
+            if (!should_exit) {
+                r = s_red;
+                g = s_green;
+                b = s_blue;
+                speed = s_speed;
+                effect = s_effect;
+            }
             xSemaphoreGive(s_lock);
         } else {
             ESP_LOGW(TAG, "Failed to take LED lock in effect task");
             vTaskDelay(pdMS_TO_TICKS(LED_LOCK_RETRY_MS));
             continue;
+        }
+
+        if (should_exit) {
+            break;
         }
 
         if (effect != last_effect) {
@@ -247,14 +253,27 @@ static void ble_srv_led_effect_task(void *arg)
         }
     }
 
-    s_effect_task = NULL;
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) == pdTRUE) {
+        if (s_effect_task == self_handle) {
+            s_effect_task = NULL;
+        }
+        xSemaphoreGive(s_lock);
+    }
+
     vTaskDelete(NULL);
 }
 
 static void ble_srv_led_start_effect(void)
 {
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to take LED lock in start_effect");
+        return;
+    }
+
     if (s_effect_task) {
-        xTaskNotify(s_effect_task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
+        TaskHandle_t task = s_effect_task;
+        xSemaphoreGive(s_lock);
+        xTaskNotify(task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
         return;
     }
 
@@ -263,27 +282,38 @@ static void ble_srv_led_start_effect(void)
         ESP_LOGE(TAG, "Failed to create effect task");
         s_effect_task = NULL;
     }
+
+    xSemaphoreGive(s_lock);
 }
 
 static void ble_srv_led_stop_effect(uint32_t wait_ms)
 {
-    if (!s_effect_task) {
+    TaskHandle_t task = NULL;
+
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to take LED lock in stop_effect");
         return;
     }
 
-    TaskHandle_t task = s_effect_task;
+    if (!s_effect_task) {
+        xSemaphoreGive(s_lock);
+        return;
+    }
+
+    task = s_effect_task;
     s_effect_task = NULL;
+
+    xSemaphoreGive(s_lock);
+
     xTaskNotify(task, LED_EFFECT_NOTIFY_STOP, eSetBits);
 
     if (wait_ms > 0) {
         uint32_t waited = 0;
-        while (eTaskGetState(task) != eDeleted && waited < wait_ms) {
+        while (waited < wait_ms) {
             vTaskDelay(pdMS_TO_TICKS(10));
             waited += 10;
         }
-        if (eTaskGetState(task) != eDeleted) {
-            vTaskDelete(task);
-        }
+        vTaskDelete(task);
     }
 }
 
@@ -445,14 +475,17 @@ bool ble_srv_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
         b = blue;
     }
 
+    TaskHandle_t effect_task = s_effect_task;
+    bool should_notify = s_led_on && s_effect != BLE_LED_EFFECT_NONE && effect_task != NULL;
+
     xSemaphoreGive(s_lock);
 
     if (send_now) {
         ble_srv_led_send_pixel(r, g, b);
     }
 
-    if (s_effect_task && s_led_on && s_effect != BLE_LED_EFFECT_NONE) {
-        xTaskNotify(s_effect_task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
+    if (should_notify && effect_task) {
+        xTaskNotify(effect_task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
     }
 
     ESP_LOGI(TAG, "LED RGB set: R=%d, G=%d, B=%d", red, green, blue);
@@ -485,14 +518,15 @@ bool ble_srv_led_set_effect(ble_led_effect_t effect, uint8_t speed)
     s_speed = speed;
     bool led_on = s_led_on;
     uint8_t r = s_red, g = s_green, b = s_blue;
+    TaskHandle_t effect_task = s_effect_task;
 
     xSemaphoreGive(s_lock);
 
     if (led_on && effect != BLE_LED_EFFECT_NONE) {
         if (old_effect == BLE_LED_EFFECT_NONE) {
             ble_srv_led_start_effect();
-        } else if (s_effect_task) {
-            xTaskNotify(s_effect_task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
+        } else if (effect_task) {
+            xTaskNotify(effect_task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
         }
     } else if (led_on) {
         ble_srv_led_stop_effect(LED_STOP_EFFECT_WAIT_MS);

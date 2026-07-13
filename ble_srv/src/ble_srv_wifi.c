@@ -16,12 +16,96 @@ static const char *TAG = "BLE_SRV_WIFI";
 #define BLE_WIFI_NVS_NAMESPACE "ble_wifi"
 #define BLE_WIFI_NVS_KEY_SSID  "ssid"
 #define BLE_WIFI_NVS_KEY_PASS  "pass"
+#define BLE_WIFI_NVS_KEY_PASS_LEN "pass_len"
 #define PROV_NVS_NAMESPACE     "wifi_prov"
 #define PROV_NVS_KEY_SSID      "ssid"
 #define PROV_NVS_KEY_PASS      "pass"
 
+#define BLE_WIFI_PASS_MAX_LEN  65
+
 static bool s_initialized = false;
 static wifi_prov_config_t s_prov_config;
+
+static uint8_t s_obf_key[6] = {0};
+static bool s_obf_key_ready = false;
+
+static void init_obf_key(void)
+{
+    if (s_obf_key_ready) return;
+    uint8_t mac[6] = {0};
+    esp_err_t ret = esp_read_mac(mac, ESP_MAC_BT);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to read BT MAC for obf key, using Wi-Fi MAC");
+        ret = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read MAC for obf key, using fallback");
+        const uint8_t fallback[6] = {0xAE, 0x5B, 0xC3, 0x7D, 0xF1, 0x29};
+        memcpy(s_obf_key, fallback, 6);
+    } else {
+        for (int i = 0; i < 6; i++) {
+            s_obf_key[i] = mac[i] ^ (mac[(i + 3) % 6] + 0x5A);
+        }
+    }
+    s_obf_key_ready = true;
+}
+
+static void obf_xor(uint8_t *dst, const uint8_t *src, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        dst[i] = src[i] ^ s_obf_key[i % sizeof(s_obf_key)];
+    }
+}
+
+static bool save_pass_obfuscated(nvs_handle_t handle, const char *password)
+{
+    size_t pass_len = strlen(password);
+    if (pass_len >= BLE_WIFI_PASS_MAX_LEN) {
+        pass_len = BLE_WIFI_PASS_MAX_LEN - 1;
+    }
+
+    uint8_t obf_buf[BLE_WIFI_PASS_MAX_LEN];
+    memset(obf_buf, 0, sizeof(obf_buf));
+    obf_xor(obf_buf, (const uint8_t *)password, pass_len);
+
+    esp_err_t err = nvs_set_blob(handle, BLE_WIFI_NVS_KEY_PASS, obf_buf, BLE_WIFI_PASS_MAX_LEN);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save obfuscated password: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    err = nvs_set_u16(handle, BLE_WIFI_NVS_KEY_PASS_LEN, (uint16_t)pass_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save password length: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    return true;
+}
+
+static bool load_pass_deobfuscated(nvs_handle_t handle, char *password, size_t max_len)
+{
+    uint8_t obf_buf[BLE_WIFI_PASS_MAX_LEN];
+    size_t required_size = BLE_WIFI_PASS_MAX_LEN;
+
+    esp_err_t err = nvs_get_blob(handle, BLE_WIFI_NVS_KEY_PASS, obf_buf, &required_size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read obfuscated password: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    uint16_t pass_len = 0;
+    err = nvs_get_u16(handle, BLE_WIFI_NVS_KEY_PASS_LEN, &pass_len);
+    if (err != ESP_OK || pass_len >= max_len || pass_len >= BLE_WIFI_PASS_MAX_LEN) {
+        ESP_LOGE(TAG, "Failed to read password length or invalid: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    obf_xor((uint8_t *)password, obf_buf, pass_len);
+    password[pass_len] = '\0';
+
+    return true;
+}
 
 static bool save_to_prov_nvs(const char *ssid, const char *password)
 {
@@ -88,6 +172,8 @@ bool ble_srv_wifi_provisioner_init(void)
         return false;
     }
 
+    init_obf_key();
+
     s_prov_config = (wifi_prov_config_t)WIFI_PROV_DEFAULT_CONFIG();
 
     s_initialized = true;
@@ -146,6 +232,8 @@ bool ble_srv_wifi_connect(const char *ssid, const char *password)
 
     ESP_LOGI(TAG, "Connecting to WiFi: %s", ssid);
 
+    init_obf_key();
+
     nvs_handle_t handle;
     esp_err_t err = nvs_open(BLE_WIFI_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
@@ -160,9 +248,7 @@ bool ble_srv_wifi_connect(const char *ssid, const char *password)
         return false;
     }
 
-    err = nvs_set_str(handle, BLE_WIFI_NVS_KEY_PASS, password);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to save password: %s", esp_err_to_name(err));
+    if (!save_pass_obfuscated(handle, password)) {
         nvs_close(handle);
         return false;
     }

@@ -19,14 +19,9 @@ typedef enum {
 } ble_wifi_ctrl_cmd_t;
 
 typedef struct __attribute__((packed)) {
-    char ssid[33];
-    char password[65];
-} ble_wifi_config_t;
-
-typedef struct __attribute__((packed)) {
+    uint32_t ip_address;
     uint8_t connected;
     uint8_t rssi;
-    uint32_t ip_address;
 } ble_wifi_status_t;
 
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED

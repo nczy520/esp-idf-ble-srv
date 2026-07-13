@@ -35,10 +35,17 @@ static uint8_t s_own_addr_type = 0;
 static SemaphoreHandle_t s_state_lock = NULL;
 
 static char s_device_name[64] = {0};
+static TimerHandle_t s_restart_timer = NULL;
 
 #define STATE_LOCK_TIMEOUT_MS    100
 #define STATE_LOCK()   do { if (s_state_lock) xSemaphoreTake(s_state_lock, pdMS_TO_TICKS(STATE_LOCK_TIMEOUT_MS)); } while(0)
 #define STATE_UNLOCK() do { if (s_state_lock) xSemaphoreGive(s_state_lock); } while(0)
+
+static void restart_timer_cb(TimerHandle_t timer)
+{
+    (void)timer;
+    esp_restart();
+}
 
 static void ble_srv_start_advertising(void);
 static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg);
@@ -132,8 +139,8 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
         STATE_UNLOCK();
-        g_ota_status_notify_enabled = false;
-        g_wifi_status_notify_enabled = false;
+        ble_srv_gatt_set_ota_status_notify_enabled(false);
+        ble_srv_gatt_set_wifi_status_notify_enabled(false);
         ble_srv_ota_abort(BLE_OTA_ERR_DISCONNECTED);
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
         ble_srv_led_set_on(false);
@@ -151,12 +158,12 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_SUBSCRIBE:
         ESP_LOGI(TAG, "SUBSCRIBE: attr=%d, notify=%d",
                  event->subscribe.attr_handle, event->subscribe.cur_notify);
-        if (event->subscribe.attr_handle == g_ota_status_chr_val_handle) {
-            g_ota_status_notify_enabled = event->subscribe.cur_notify;
+        if (event->subscribe.attr_handle == ble_srv_gatt_get_ota_status_chr_val_handle()) {
+            ble_srv_gatt_set_ota_status_notify_enabled(event->subscribe.cur_notify);
         }
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED
-        else if (event->subscribe.attr_handle == g_wifi_status_chr_val_handle) {
-            g_wifi_status_notify_enabled = event->subscribe.cur_notify;
+        else if (event->subscribe.attr_handle == ble_srv_gatt_get_wifi_status_chr_val_handle()) {
+            ble_srv_gatt_set_wifi_status_notify_enabled(event->subscribe.cur_notify);
         }
 #endif
         break;
@@ -233,6 +240,13 @@ bool ble_srv_init(void)
         return false;
     }
 
+    if (!ble_srv_gatt_init_lock()) {
+        ESP_LOGE(TAG, "Failed to create GATT lock");
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
+        return false;
+    }
+
     ret = nimble_port_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
@@ -258,6 +272,9 @@ bool ble_srv_init(void)
     if (rc != 0) {
         ESP_LOGE(TAG, "ble_gatts_count_cfg failed: rc=%d", rc);
         nimble_port_deinit();
+        ble_srv_gatt_deinit();
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
         return false;
     }
 
@@ -265,6 +282,9 @@ bool ble_srv_init(void)
     if (rc != 0) {
         ESP_LOGE(TAG, "ble_gatts_add_svcs failed: rc=%d", rc);
         nimble_port_deinit();
+        ble_srv_gatt_deinit();
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
         return false;
     }
 
@@ -274,6 +294,9 @@ bool ble_srv_init(void)
         ESP_LOGE(TAG, "Failed to initialize OTA common");
         nimble_port_stop();
         nimble_port_deinit();
+        ble_srv_gatt_deinit();
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
         return false;
     }
 
@@ -282,6 +305,9 @@ bool ble_srv_init(void)
         ble_srv_ota_deinit();
         nimble_port_stop();
         nimble_port_deinit();
+        ble_srv_gatt_deinit();
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
         return false;
     }
 
@@ -297,6 +323,9 @@ bool ble_srv_init(void)
         ble_srv_ota_deinit();
         nimble_port_stop();
         nimble_port_deinit();
+        ble_srv_gatt_deinit();
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
         return false;
     }
 #endif
@@ -326,16 +355,21 @@ void ble_srv_deinit(void)
     ble_srv_ota_bt_deinit();
     ble_srv_ota_deinit();
 
-    ble_srv_gatt_deinit();
-    ble_srv_device_deinit();
-
     nimble_port_stop();
     nimble_port_deinit();
+
+    ble_srv_gatt_deinit();
 
     STATE_LOCK();
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_advertising = false;
     STATE_UNLOCK();
+
+    if (s_restart_timer) {
+        xTimerStop(s_restart_timer, 0);
+        xTimerDelete(s_restart_timer, portMAX_DELAY);
+        s_restart_timer = NULL;
+    }
 
     if (s_state_lock) {
         vSemaphoreDelete(s_state_lock);
@@ -345,10 +379,31 @@ void ble_srv_deinit(void)
 
 bool ble_srv_is_connected(void)
 {
-    return s_conn_handle != BLE_HS_CONN_HANDLE_NONE;
+    STATE_LOCK();
+    bool connected = (s_conn_handle != BLE_HS_CONN_HANDLE_NONE);
+    STATE_UNLOCK();
+    return connected;
 }
 
 uint16_t ble_srv_get_conn_handle(void)
 {
-    return s_conn_handle;
+    STATE_LOCK();
+    uint16_t handle = s_conn_handle;
+    STATE_UNLOCK();
+    return handle;
+}
+
+void ble_srv_schedule_restart(uint32_t delay_ms)
+{
+    if (!s_restart_timer) {
+        s_restart_timer = xTimerCreate("srv_rboot", pdMS_TO_TICKS(delay_ms),
+                                        pdFALSE, NULL, restart_timer_cb);
+        if (s_restart_timer) {
+            xTimerStart(s_restart_timer, 0);
+        }
+        return;
+    }
+    xTimerChangePeriod(s_restart_timer, pdMS_TO_TICKS(delay_ms), 0);
+    xTimerReset(s_restart_timer, 0);
+    xTimerStart(s_restart_timer, 0);
 }

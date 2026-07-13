@@ -317,9 +317,13 @@ static void url_task(void *arg)
     }
 
     if (check_res == VERSION_CHECK_DOWNGRADE) {
+#ifdef CONFIG_BLE_SRV_OTA_URL_ALLOW_DOWNGRADE
+        ESP_LOGW(TAG, "Remote firmware is older than current, downgrade allowed");
+#else
         ESP_LOGW(TAG, "Remote firmware is older than current, rejecting downgrade");
         url_task_finish(gen, BLE_OTA_STATE_CHECK_FAIL, BLE_OTA_ERR_VERSION_DOWNGRADE);
         return;
+#endif
     }
 
     if (check_res == VERSION_CHECK_UP_TO_DATE) {
@@ -459,14 +463,12 @@ void ble_srv_ota_url_deinit(void)
         s_url_task = NULL;
         int wait = 0;
         int max_wait_ticks = URL_DEINIT_WAIT_MS / URL_DEINIT_POLL_MS;
-        while (eTaskGetState(task) != eDeleted && wait < max_wait_ticks) {
+        while (wait < max_wait_ticks) {
             vTaskDelay(pdMS_TO_TICKS(URL_DEINIT_POLL_MS));
             wait++;
         }
-        if (eTaskGetState(task) != eDeleted) {
-            ESP_LOGW(TAG, "URL OTA task did not exit in time, force deleting");
-            vTaskDelete(task);
-        }
+        ESP_LOGW(TAG, "URL OTA task did not exit in time, force deleting");
+        vTaskDelete(task);
     }
     s_initialized = false;
 }

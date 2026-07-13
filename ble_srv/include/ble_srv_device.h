@@ -25,17 +25,17 @@ typedef enum {
 } ble_srv_cmd_t;
 
 typedef struct __attribute__((packed)) {
+    uint32_t cpu_freq_mhz;
+    uint32_t uptime_seconds;
+    float temperature_celsius;
+    uint8_t temp_sensor_supported;
+    uint8_t reset_reason;
+    uint8_t cpu_cores;
     char chip_name[32];
     char chip_model[16];
     char flash_size[16];
     char mac_address[18];
     char version[32];
-    uint32_t cpu_freq_mhz;
-    float temperature_celsius;
-    uint8_t temp_sensor_supported;
-    uint8_t reset_reason;
-    uint32_t uptime_seconds;
-    uint8_t cpu_cores;
 } ble_srv_device_info_t;
 
 typedef struct __attribute__((packed)) {
@@ -67,17 +67,17 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     uint32_t flash_total;
     uint32_t flash_free;
-    uint8_t partition_count;
     uint8_t flash_speed_mhz;
+    uint8_t partition_count;
     char running_partition[16];
 } ble_srv_flash_info_t;
 
 typedef struct __attribute__((packed)) {
-    char label[16];
     uint32_t address;
     uint32_t size;
     uint8_t type;
     uint8_t subtype;
+    char label[16];
 } ble_srv_partition_info_t;
 
 bool ble_srv_get_device_info(ble_srv_device_info_t *info);

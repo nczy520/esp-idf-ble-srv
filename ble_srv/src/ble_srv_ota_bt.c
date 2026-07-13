@@ -491,8 +491,10 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
         uint32_t recv = s_total_received;
         uint32_t written = s_fw_bytes_written;
         BT_UNLOCK();
-        ble_srv_ota_report_progress(gen, recv, written);
-        ble_srv_ota_push_status(gen);
+        if (ble_srv_ota_gen_valid(gen)) {
+            ble_srv_ota_report_progress(gen, recv, written);
+            ble_srv_ota_push_status(gen);
+        }
         return true;
     }
 
@@ -570,8 +572,10 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
         uint32_t total_received = s_total_received;
         uint32_t bytes_written = s_fw_bytes_written;
         BT_UNLOCK();
-        ble_srv_ota_report_progress(gen, total_received, bytes_written);
-        ble_srv_ota_push_status(gen);
+        if (ble_srv_ota_gen_valid(gen)) {
+            ble_srv_ota_report_progress(gen, total_received, bytes_written);
+            ble_srv_ota_push_status(gen);
+        }
     } else {
         BT_UNLOCK();
     }

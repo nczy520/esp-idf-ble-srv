@@ -77,7 +77,7 @@ ESP32 BLE Device Manager CLI - 命令行工具 v1.2.1
   python tools/client.py -d BLE-SRV led-effect --effect breath --speed 80
 """
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 import asyncio
 import argparse

@@ -12,7 +12,6 @@ static const char *TAG = "BLE_SRV_NTP";
 #define NTP_MAX_RETRIES           10
 #define NTP_RETRY_INTERVAL_MS     1000
 #define NTP_DEINIT_WAIT_MS        2000
-#define NTP_POLL_INTERVAL_MS      20
 
 #ifdef CONFIG_BLE_SRV_NTP_ENABLED
 static const char *ntp_servers[] = {
@@ -23,7 +22,7 @@ static const char *ntp_servers[] = {
     CONFIG_BLE_SRV_NTP_SERVER_5,
 };
 
-static volatile TaskHandle_t s_ntp_task = NULL;
+static TaskHandle_t s_ntp_task = NULL;
 static volatile bool s_ntp_stop = false;
 
 static void sntp_time_sync_notification_cb(struct timeval *tv)
@@ -41,7 +40,7 @@ static void sntp_time_sync_notification_cb(struct timeval *tv)
 
 static void ntp_sync_task(void *arg)
 {
-    (void)arg;
+    TaskHandle_t caller = (TaskHandle_t)arg;
     ESP_LOGI(TAG, "Starting NTP time synchronization...");
 
     if (esp_sntp_enabled()) {
@@ -96,6 +95,9 @@ static void ntp_sync_task(void *arg)
     }
 
     s_ntp_task = NULL;
+    if (caller) {
+        xTaskNotifyGive(caller);
+    }
     vTaskDelete(NULL);
 }
 #endif
@@ -109,14 +111,13 @@ bool ble_srv_ntp_sync(void)
     }
 
     s_ntp_stop = false;
-    TaskHandle_t task_handle = NULL;
-    BaseType_t ret = xTaskCreate(ntp_sync_task, "ntp_sync", 4096, NULL, 2, &task_handle);
+    BaseType_t ret = xTaskCreate(ntp_sync_task, "ntp_sync", 4096,
+                                  xTaskGetCurrentTaskHandle(), 2, &s_ntp_task);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create NTP sync task");
         s_ntp_task = NULL;
         return false;
     }
-    s_ntp_task = task_handle;
 
     ESP_LOGI(TAG, "NTP sync task started");
     return true;
@@ -131,10 +132,10 @@ void ble_srv_ntp_deinit(void)
 #ifdef CONFIG_BLE_SRV_NTP_ENABLED
     s_ntp_stop = true;
 
-    uint32_t waited = 0;
-    while (s_ntp_task && waited < NTP_DEINIT_WAIT_MS) {
-        vTaskDelay(pdMS_TO_TICKS(NTP_POLL_INTERVAL_MS));
-        waited += NTP_POLL_INTERVAL_MS;
+    TaskHandle_t task = s_ntp_task;
+    if (task) {
+        xTaskNotifyGive(task);
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(NTP_DEINIT_WAIT_MS));
     }
 
     if (esp_sntp_enabled()) {

@@ -73,6 +73,16 @@ menu "BLE Service"
                 This disables ALL server-name authentication (CN/SAN/SNI).
                 Only enable this for testing or when using self-signed certificates
                 with incorrect hostname. Not recommended for production.
+
+        config BLE_SRV_OTA_URL_ALLOW_DOWNGRADE
+            bool "Allow Firmware Downgrade"
+            default n
+            depends on BLE_SRV_OTA_URL_ENABLED
+            help
+                Allow downgrading to an older firmware version during URL OTA.
+                When disabled, OTA will be rejected if the remote firmware version
+                is older than the current version. Enable this for testing or when
+                you need to roll back to a previous version.
     endmenu
 
     menu "WiFi"

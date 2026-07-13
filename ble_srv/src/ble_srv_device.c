@@ -1,6 +1,7 @@
 #include "ble_srv_device.h"
 #include "ble_srv_temp_sensor.h"
 #include "ble_srv_ota_common.h"
+#include "ble_srv.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -17,17 +18,8 @@
 #include "esp_private/esp_clk.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/timers.h"
 
 static const char *TAG = "BLE_SRV_DEVICE";
-
-static TimerHandle_t s_restart_timer = NULL;
-
-static void restart_timer_cb(TimerHandle_t timer)
-{
-    (void)timer;
-    esp_restart();
-}
 
 bool ble_srv_get_device_info(ble_srv_device_info_t *info)
 {
@@ -40,36 +32,24 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
 
+    const char *chip_name = "ESP32-Unknown";
     switch (chip_info.model) {
-    case CHIP_ESP32:
-        strncpy(info->chip_name, "ESP32", sizeof(info->chip_name) - 1);
-        strncpy(info->chip_model, "ESP32", sizeof(info->chip_model) - 1);
-        break;
-    case CHIP_ESP32S2:
-        strncpy(info->chip_name, "ESP32-S2", sizeof(info->chip_name) - 1);
-        strncpy(info->chip_model, "ESP32-S2", sizeof(info->chip_model) - 1);
-        break;
-    case CHIP_ESP32S3:
-        strncpy(info->chip_name, "ESP32-S3", sizeof(info->chip_name) - 1);
-        strncpy(info->chip_model, "ESP32-S3", sizeof(info->chip_model) - 1);
-        break;
-    case CHIP_ESP32C3:
-        strncpy(info->chip_name, "ESP32-C3", sizeof(info->chip_name) - 1);
-        strncpy(info->chip_model, "ESP32-C3", sizeof(info->chip_model) - 1);
-        break;
-    case CHIP_ESP32C6:
-        strncpy(info->chip_name, "ESP32-C6", sizeof(info->chip_name) - 1);
-        strncpy(info->chip_model, "ESP32-C6", sizeof(info->chip_model) - 1);
-        break;
-    case CHIP_ESP32H2:
-        strncpy(info->chip_name, "ESP32-H2", sizeof(info->chip_name) - 1);
-        strncpy(info->chip_model, "ESP32-H2", sizeof(info->chip_model) - 1);
-        break;
-    default:
-        strncpy(info->chip_name, "ESP32-Unknown", sizeof(info->chip_name) - 1);
-        strncpy(info->chip_model, "Unknown", sizeof(info->chip_model) - 1);
-        break;
+    case CHIP_ESP32:     chip_name = "ESP32"; break;
+    case CHIP_ESP32S2:   chip_name = "ESP32-S2"; break;
+    case CHIP_ESP32S3:   chip_name = "ESP32-S3"; break;
+    case CHIP_ESP32C3:   chip_name = "ESP32-C3"; break;
+    case CHIP_ESP32C6:   chip_name = "ESP32-C6"; break;
+    case CHIP_ESP32H2:   chip_name = "ESP32-H2"; break;
+#if CONFIG_IDF_TARGET_ESP32P4
+    case CHIP_ESP32P4:   chip_name = "ESP32-P4"; break;
+#endif
+#if CONFIG_IDF_TARGET_ESP32C5
+    case CHIP_ESP32C5:   chip_name = "ESP32-C5"; break;
+#endif
+    default:             chip_name = "ESP32-Unknown"; break;
     }
+    strncpy(info->chip_name, chip_name, sizeof(info->chip_name) - 1);
+    strncpy(info->chip_model, chip_name, sizeof(info->chip_model) - 1);
 
     uint32_t flash_size = 0;
     esp_err_t ret = esp_flash_get_size(NULL, &flash_size);
@@ -222,7 +202,9 @@ bool ble_srv_get_flash_info(ble_srv_flash_info_t *info)
             info->partition_count++;
             used += part->size;
         }
-        it = esp_partition_next(it);
+        esp_partition_iterator_t next_it = esp_partition_next(it);
+        esp_partition_iterator_release(it);
+        it = next_it;
     }
 
     if (flash_size > used) {
@@ -273,7 +255,7 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
     }
 
     if (!found) {
-        if (it != NULL) {
+        if (it) {
             esp_partition_iterator_release(it);
         }
         ESP_LOGW(TAG, "Partition index %d not found", index);
@@ -298,21 +280,9 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
 void ble_srv_restart_device(void)
 {
     ESP_LOGI(TAG, "Restarting device...");
-    if (!s_restart_timer) {
-        s_restart_timer = xTimerCreate("dev_rboot", pdMS_TO_TICKS(BLE_RESTART_DELAY_MS),
-                                        pdFALSE, NULL, restart_timer_cb);
-    }
-    if (s_restart_timer) {
-        xTimerReset(s_restart_timer, 0);
-        xTimerStart(s_restart_timer, 0);
-    }
+    ble_srv_schedule_restart(BLE_RESTART_DELAY_MS);
 }
 
 void ble_srv_device_deinit(void)
 {
-    if (s_restart_timer) {
-        xTimerStop(s_restart_timer, 0);
-        xTimerDelete(s_restart_timer, portMAX_DELAY);
-        s_restart_timer = NULL;
-    }
 }

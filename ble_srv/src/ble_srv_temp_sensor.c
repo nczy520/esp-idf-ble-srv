@@ -87,7 +87,6 @@ bool ble_srv_temp_sensor_read(float *out_celsius)
 
 void ble_srv_temp_sensor_deinit(void)
 {
-    // Nothing to do
 }
 
 bool ble_srv_temp_sensor_is_supported(void)
