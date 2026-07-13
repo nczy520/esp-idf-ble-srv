@@ -20,6 +20,7 @@ class OTATabComponent(BaseTabComponent):
         self.ota_url_btn = None
         self.ota_default_btn = None
         self.ota_overlay = None
+        self.file_picker = None
 
     def build(self):
         """构建OTA升级Tab"""
@@ -126,4 +127,36 @@ class OTATabComponent(BaseTabComponent):
 
     def _on_pick_firmware(self, event):
         """选择固件文件回调"""
-        self.safe_call("pick_firmware", event)
+        import sys
+        import subprocess
+
+        if sys.platform == "darwin":
+            script = '''
+                set chosenFile to choose file with prompt "选择固件文件" of type {"bin"}
+                return POSIX path of chosenFile
+            '''
+            try:
+                result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+                file_path = result.stdout.strip()
+                if file_path:
+                    self.fw_path_field.value = file_path
+                    self.app.page.update()
+            except Exception:
+                pass
+        else:
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.wm_attributes('-topmost', 1)
+                file_path = filedialog.askopenfilename(
+                    title="选择固件文件",
+                    filetypes=[("Binary files", "*.bin"), ("All files", "*.*")]
+                )
+                root.destroy()
+                if file_path:
+                    self.fw_path_field.value = file_path
+                    self.app.page.update()
+            except Exception:
+                pass

@@ -22,6 +22,6 @@ dependencies:
 direct_dependencies:
 - idf
 - michmich/esp-idf-wifi-provisioner
-manifest_hash: e302313740237c0de45865947986c126d56e03ce70d0d47292ba9e3ea49abda4
+manifest_hash: 1e19f6d1dde2bc4e889cfb93ea5ba005f09b0a8828d9dcc1aa67971c4dba32ab
 target: esp32s3
 version: 3.0.0

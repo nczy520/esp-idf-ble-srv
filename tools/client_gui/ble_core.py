@@ -9,7 +9,23 @@ import os
 import time
 import queue
 import threading
+import re
 from typing import Optional, List, Dict, Any, Callable, Tuple, Union
+
+
+def format_device_address(address):
+    if not address:
+        return ""
+    mac_pattern = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
+    if mac_pattern.match(address):
+        return address.replace('-', ':').upper()
+    uuid_pattern = re.compile(r'^([0-9A-Fa-f]{8})-([0-9A-Fa-f]{4})-([0-9A-Fa-f]{4})-([0-9A-Fa-f]{4})-([0-9A-Fa-f]{12})$', re.IGNORECASE)
+    match = uuid_pattern.match(address)
+    if match:
+        parts = match.group(5)
+        mac_parts = [parts[i:i+2] for i in range(0, 12, 2)]
+        return ':'.join(mac_parts).upper()
+    return address.upper()
 
 try:
     from bleak import BleakClient, BleakScanner, BleakError
@@ -360,7 +376,8 @@ class BleCore:
             name = device.name or ""
             if name and (name_filter_lower is None or name.lower().startswith(name_filter_lower)):
                 info = {
-                    "address": device.address,
+                    "address": format_device_address(device.address),
+                    "raw_address": device.address,
                     "name": name,
                     "rssi": advertising_data.rssi if advertising_data.rssi is not None else -100,
                 }
@@ -405,7 +422,7 @@ class BleCore:
         return devices
 
     async def connect_device(self, device_info):
-        address = device_info.get("address") if isinstance(device_info, dict) else device_info.address
+        address = device_info.get("raw_address", device_info.get("address")) if isinstance(device_info, dict) else getattr(device_info, "address", None)
         name = device_info.get("name", "Unknown") if isinstance(device_info, dict) else getattr(device_info, "name", "Unknown")
 
         if self.ble_client and self._is_connected:

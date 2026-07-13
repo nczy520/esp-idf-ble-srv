@@ -128,22 +128,7 @@ class OTAControlHandler(BaseHandler):
 
     def pick_firmware(self, event=None):
         """选择固件文件"""
-        try:
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes('-topmost', 1)
-            file_path = filedialog.askopenfilename(
-                title="选择固件文件",
-                filetypes=[("Binary files", "*.bin"), ("All files", "*.*")]
-            )
-            root.destroy()
-            if file_path:
-                self.ui.fw_path_field.value = file_path
-                self.safe_update()
-        except Exception as e:
-            self.log(f"打开文件对话框失败: {e}", "error")
+        pass
 
     def start_ota_bt(self, event=None):
         """开始蓝牙OTA升级"""

@@ -14,10 +14,74 @@ import os
 import sys
 import threading
 import traceback
+import json
 
 import flet as ft
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.dirname(os.path.abspath(sys.argv[0])))
+
+
+def get_config_path():
+    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(script_dir, "config.json")
+
+
+def load_window_position():
+    config_path = get_config_path()
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                x = config.get("window_x")
+                y = config.get("window_y")
+                if x is not None and y is not None:
+                    return int(x), int(y)
+    except Exception:
+        pass
+    return None, None
+
+
+def save_window_position(x, y):
+    config_path = get_config_path()
+    try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump({"window_x": x, "window_y": y}, f, indent=2)
+    except Exception as e:
+        print(f"保存配置文件失败: {e}")
+
+
+def get_screen_size():
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        width = root.winfo_screenwidth()
+        height = root.winfo_screenheight()
+        root.destroy()
+        return width, height
+    except Exception:
+        return 1920, 1080
+
+
+def is_position_valid(x, y, window_width, window_height):
+    try:
+        screen_width, screen_height = get_screen_size()
+        if x >= 0 and y >= 0:
+            if x + window_width <= screen_width and y + window_height <= screen_height:
+                return True
+        if x >= -window_width and x <= screen_width:
+            if y >= -window_height and y <= screen_height:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def center_window(window):
+    screen_width, screen_height = get_screen_size()
+    window.left = (screen_width - window.width) // 2
+    window.top = (screen_height - window.height) // 2
 
 from client_gui.ble_core import BleCore, EFFECT_MAP
 from client_gui.gui_components import GuiComponents
@@ -101,6 +165,23 @@ class BleDeviceManager:
             font_family="system-ui",
         )
         page.bgcolor = ft.Colors.with_opacity(0.03, "black")
+
+        saved_x, saved_y = load_window_position()
+        if saved_x is not None and saved_y is not None:
+            if is_position_valid(saved_x, saved_y, page.window.width, page.window.height):
+                page.window.left = saved_x
+                page.window.top = saved_y
+            else:
+                center_window(page.window)
+                save_window_position(page.window.left, page.window.top)
+        else:
+            center_window(page.window)
+            save_window_position(page.window.left, page.window.top)
+
+        def on_page_close(e):
+            save_window_position(page.window.left, page.window.top)
+
+        page.on_close = on_page_close
 
         self.page = page
         self.handlers = GuiHandlers(self)

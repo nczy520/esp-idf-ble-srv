@@ -178,23 +178,19 @@ class ConnectionHandler(BaseHandler):
         
         self.ui.device_list.controls.append(
             ft.ListTile(
-                leading=ft.Icon(ft.Icons.BLUETOOTH, color=ft.Colors.BLUE, size=20),
-                title=ft.Row([
-                    ft.Column([
-                        ft.Text(device['name'], size=13, weight=ft.FontWeight.W_500),
-                        ft.Row([
-                            ft.Text(device['address'], size=10, color=ft.Colors.ON_SURFACE_VARIANT),
-                            rssi_icon_ctrl,
-                            rssi_text_ctrl,
-                        ], spacing=4),
-                    ], spacing=0, expand=True),
-                    ft.Container(width=8),
-                    connect_btn,
-                ], spacing=0, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                leading=ft.Icon(ft.Icons.BLUETOOTH, color=ft.Colors.BLUE, size=18),
+                title=ft.Text(device['name'], size=13, weight=ft.FontWeight.W_500),
+                subtitle=ft.Row([
+                    ft.Text(device['address'], size=10, color=ft.Colors.ON_SURFACE_VARIANT),
+                    rssi_icon_ctrl,
+                    rssi_text_ctrl,
+                ], spacing=2),
+                trailing=connect_btn,
                 on_click=self.handle_device_click,
                 data=index,
                 style=ft.ListTileStyle.LIST,
                 dense=True,
+                content_padding=ft.padding.Padding(8, 6, 8, 6),
             )
         )
 
