@@ -86,6 +86,23 @@ EFFECT_MAP = {
     "频闪": 4,
 }
 
+OTA_ERROR_NAMES = {
+    0: "无错误",
+    1: "无效命令",
+    2: "固件大小无效",
+    3: "Flash写入失败",
+    4: "无可用OTA分区",
+    5: "固件校验失败",
+    6: "设备内部错误",
+    7: "设备忙",
+    8: "网络未连接",
+    9: "用户中止",
+    10: "连接断开",
+    11: "远程固件版本更旧",
+    12: "固件版本相同",
+    13: "固件CRC校验失败",
+}
+
 _UI_FLUSH_INTERVAL = 0.05
 
 
@@ -365,59 +382,41 @@ class BleCore:
 
     async def scan_devices(self, timeout=5, name_filter=None, on_device_found=None):
         devices = []
+        seen_addrs = set()
         name_filter_lower = name_filter.lower() if name_filter else None
-        found_queue: queue.Queue = queue.Queue()
-        scan_done = False
 
         def detection_callback(device, advertising_data):
-            nonlocal scan_done
-            if scan_done:
-                return
             name = device.name or ""
-            if name and (name_filter_lower is None or name.lower().startswith(name_filter_lower)):
-                info = {
-                    "address": format_device_address(device.address),
-                    "raw_address": device.address,
-                    "name": name,
-                    "rssi": advertising_data.rssi if advertising_data.rssi is not None else -100,
-                }
+            if not name:
+                return
+            if name_filter_lower is not None and not name.lower().startswith(name_filter_lower):
+                return
+            addr = format_device_address(device.address)
+            if addr in seen_addrs:
+                return
+            seen_addrs.add(addr)
+            info = {
+                "address": addr,
+                "raw_address": device.address,
+                "name": name,
+                "rssi": advertising_data.rssi if advertising_data.rssi is not None else -100,
+            }
+            devices.append(info)
+            if on_device_found:
                 try:
-                    found_queue.put_nowait(info)
+                    on_device_found(info)
                 except Exception:
                     pass
 
-        async def _drain_queue():
-            nonlocal scan_done
-            while not scan_done or not found_queue.empty():
-                try:
-                    info = found_queue.get_nowait()
-                except queue.Empty:
-                    await asyncio.sleep(0.05)
-                    continue
-                if info not in devices:
-                    devices.append(info)
-                    if on_device_found:
-                        try:
-                            on_device_found(info)
-                        except Exception:
-                            pass
-
         self._log("开始扫描BLE设备...", "info")
-        drain_task = asyncio.create_task(_drain_queue())
+        scanner = BleakScanner(detection_callback=detection_callback)
         try:
-            async with BleakScanner(detection_callback=detection_callback) as scanner:
-                await asyncio.sleep(timeout)
-        finally:
-            scan_done = True
-            for _ in range(20):
-                if found_queue.empty():
-                    break
-                await asyncio.sleep(0.05)
-            drain_task.cancel()
-            try:
-                await drain_task
-            except asyncio.CancelledError:
-                pass
+            await scanner.start()
+            await asyncio.sleep(timeout)
+            await scanner.stop()
+        except Exception as e:
+            self._log(f"扫描异常: {e}", "error")
+
         self._log(f"扫描完成，发现 {len(devices)} 个设备", "info")
         return devices
 
@@ -816,23 +815,7 @@ class BleCore:
                 if not self._ota_active:
                     self._reset_ota_state()
                     if self.ota_status and self.ota_status.state in (OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL, OTAState.APPLY_FAIL, OTAState.CHECK_FAIL):
-                        error_names = {
-                            OTAError.NONE: "无错误",
-                            OTAError.INVALID_CMD: "无效命令",
-                            OTAError.INVALID_SIZE: "固件大小无效",
-                            OTAError.FLASH_WRITE: "Flash写入失败",
-                            OTAError.NO_PARTITION: "无可用OTA分区",
-                            OTAError.VERIFY_FAILED: "固件校验失败",
-                            OTAError.INTERNAL: "设备内部错误",
-                            OTAError.BUSY: "设备忙",
-                            OTAError.NO_NETWORK: "网络未连接",
-                            OTAError.ABORTED: "用户中止",
-                            OTAError.DISCONNECTED: "连接断开",
-                            OTAError.VERSION_DOWNGRADE: "远程固件版本更旧",
-                            OTAError.VERSION_SAME: "固件版本相同",
-                            OTAError.CRC_MISMATCH: "固件CRC校验失败",
-                        }
-                        err_name = error_names.get(self.ota_status.error_code, f"错误码{self.ota_status.error_code}")
+                        err_name = OTA_ERROR_NAMES.get(self.ota_status.error_code, f"错误码{self.ota_status.error_code}")
                         return False, f"OTA失败: {err_name}"
                     return False, "OTA已中止"
 
@@ -844,23 +827,7 @@ class BleCore:
                         OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL,
                         OTAState.APPLY_FAIL, OTAState.CHECK_FAIL):
                     self._reset_ota_state()
-                    error_names = {
-                        OTAError.NONE: "无错误",
-                        OTAError.INVALID_CMD: "无效命令",
-                        OTAError.INVALID_SIZE: "固件大小无效",
-                        OTAError.FLASH_WRITE: "Flash写入失败",
-                        OTAError.NO_PARTITION: "无可用OTA分区",
-                        OTAError.VERIFY_FAILED: "固件校验失败",
-                        OTAError.INTERNAL: "设备内部错误",
-                        OTAError.BUSY: "设备忙",
-                        OTAError.NO_NETWORK: "网络未连接",
-                        OTAError.ABORTED: "用户中止",
-                        OTAError.DISCONNECTED: "连接断开",
-                        OTAError.VERSION_DOWNGRADE: "远程固件版本更旧",
-                        OTAError.VERSION_SAME: "固件版本相同",
-                        OTAError.CRC_MISMATCH: "固件CRC校验失败",
-                    }
-                    err_name = error_names.get(self.ota_status.error_code, f"错误码{self.ota_status.error_code}")
+                    err_name = OTA_ERROR_NAMES.get(self.ota_status.error_code, f"错误码{self.ota_status.error_code}")
                     return False, f"OTA失败: {err_name}"
 
                 window_end = min(acked_offset + window_bytes, fw_size)

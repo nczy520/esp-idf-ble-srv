@@ -10,6 +10,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_mac.h"
@@ -31,8 +32,13 @@ static const char *TAG = "BLE_SRV";
 static volatile uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static volatile bool s_advertising = false;
 static uint8_t s_own_addr_type = 0;
+static SemaphoreHandle_t s_state_lock = NULL;
 
 static char s_device_name[64] = {0};
+
+#define STATE_LOCK_TIMEOUT_MS    100
+#define STATE_LOCK()   do { if (s_state_lock) xSemaphoreTake(s_state_lock, pdMS_TO_TICKS(STATE_LOCK_TIMEOUT_MS)); } while(0)
+#define STATE_UNLOCK() do { if (s_state_lock) xSemaphoreGive(s_state_lock); } while(0)
 
 static void ble_srv_start_advertising(void);
 static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg);
@@ -44,10 +50,13 @@ static void ble_srv_start_advertising(void)
     struct ble_gap_adv_params adv_params;
     int rc;
 
+    STATE_LOCK();
     if (s_advertising) {
+        STATE_UNLOCK();
         ESP_LOGW(TAG, "Already advertising");
         return;
     }
+    STATE_UNLOCK();
 
     memset(&adv_fields, 0, sizeof(adv_fields));
     adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
@@ -86,13 +95,17 @@ static void ble_srv_start_advertising(void)
 
     rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER,
                            &adv_params, ble_srv_gap_event_handler, NULL);
+    STATE_LOCK();
     if (rc == 0) {
         s_advertising = true;
+        STATE_UNLOCK();
         ESP_LOGI(TAG, "BLE advertising started");
     } else if (rc == BLE_HS_EALREADY) {
         s_advertising = true;
+        STATE_UNLOCK();
         ESP_LOGW(TAG, "BLE already advertising");
     } else {
+        STATE_UNLOCK();
         ESP_LOGE(TAG, "ble_gap_adv_start failed: rc=%d", rc);
     }
 }
@@ -102,18 +115,23 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         ESP_LOGI(TAG, "CONNECT: status=%d", event->connect.status);
+        STATE_LOCK();
         if (event->connect.conn_handle != BLE_HS_CONN_HANDLE_NONE) {
             s_conn_handle = event->connect.conn_handle;
             s_advertising = false;
+            STATE_UNLOCK();
         } else {
+            STATE_UNLOCK();
             ble_srv_start_advertising();
         }
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
+        STATE_LOCK();
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
+        STATE_UNLOCK();
         g_ota_status_notify_enabled = false;
         g_wifi_status_notify_enabled = false;
         ble_srv_ota_abort(BLE_OTA_ERR_DISCONNECTED);
@@ -124,7 +142,9 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
+        STATE_LOCK();
         s_advertising = false;
+        STATE_UNLOCK();
         ble_srv_start_advertising();
         break;
 
@@ -157,7 +177,10 @@ static void ble_srv_on_sync(void)
     int rc;
 
     rc = ble_hs_util_ensure_addr(0);
-    assert(rc == 0);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "ble_hs_util_ensure_addr failed: rc=%d", rc);
+        return;
+    }
 
     rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
     if (rc != 0) {
@@ -204,9 +227,17 @@ bool ble_srv_init(void)
         return false;
     }
 
+    s_state_lock = xSemaphoreCreateMutex();
+    if (!s_state_lock) {
+        ESP_LOGE(TAG, "Failed to create state lock");
+        return false;
+    }
+
     ret = nimble_port_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
         return false;
     }
 
@@ -301,8 +332,15 @@ void ble_srv_deinit(void)
     nimble_port_stop();
     nimble_port_deinit();
 
+    STATE_LOCK();
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_advertising = false;
+    STATE_UNLOCK();
+
+    if (s_state_lock) {
+        vSemaphoreDelete(s_state_lock);
+        s_state_lock = NULL;
+    }
 }
 
 bool ble_srv_is_connected(void)

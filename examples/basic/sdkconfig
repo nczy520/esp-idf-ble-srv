@@ -4253,7 +4253,6 @@ CONFIG_BLE_SRV_ENABLED=y
 #
 # Advertising
 #
-# default:
 CONFIG_BLE_SRV_ADV_NAME_PREFIX="BLE-SRV"
 # default:
 CONFIG_BLE_SRV_ADV_INTERVAL_MIN=32
@@ -4274,7 +4273,7 @@ CONFIG_BLE_SRV_OTA_BT_NOTIFY_INTERVAL=10
 # OTA URL
 #
 CONFIG_BLE_SRV_OTA_URL_ENABLED=y
-CONFIG_BLE_SRV_OTA_URL_DEFAULT="https://mdeve.com/upgrade/esp32/ble_srv_example.bin"
+CONFIG_BLE_SRV_OTA_URL_DEFAULT="https://mdeve.com/upgrade/esp32/https_ota_example.bin"
 # CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK is not set
 # end of OTA URL
 

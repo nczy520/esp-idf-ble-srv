@@ -40,6 +40,7 @@ static const char *TAG = "BLE_SRV_LED";
 #define LED_SEND_OFF_DELAY_MS   20
 #define LED_STOP_EFFECT_WAIT_MS 100
 #define LED_DEFAULT_SPEED       50
+#define LED_LOCK_TIMEOUT_MS     5000
 
 #define LED_EFFECT_NOTIFY_STOP     (1 << 0)
 #define LED_EFFECT_NOTIFY_RESTART  (1 << 1)
@@ -210,7 +211,7 @@ static void ble_srv_led_effect_task(void *arg)
             break;
         }
 
-        if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) == pdTRUE) {
             r = s_red;
             g = s_green;
             b = s_blue;
@@ -218,6 +219,7 @@ static void ble_srv_led_effect_task(void *arg)
             effect = s_effect;
             xSemaphoreGive(s_lock);
         } else {
+            ESP_LOGW(TAG, "Failed to take LED lock in effect task");
             vTaskDelay(pdMS_TO_TICKS(LED_LOCK_RETRY_MS));
             continue;
         }
@@ -391,7 +393,8 @@ bool ble_srv_led_set_on(bool on)
         return false;
     }
 
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to take LED lock in set_on");
         return false;
     }
 
@@ -426,7 +429,8 @@ bool ble_srv_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
     bool send_now = false;
     uint8_t r, g, b;
 
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to take LED lock in set_rgb");
         return false;
     }
 
@@ -471,7 +475,8 @@ bool ble_srv_led_set_effect(ble_led_effect_t effect, uint8_t speed)
         speed = 1;
     }
 
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to take LED lock in set_effect");
         return false;
     }
 
@@ -506,7 +511,8 @@ bool ble_srv_led_get_status(ble_led_status_t *status)
         return false;
     }
 
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to take LED lock in get_status");
         return false;
     }
 
