@@ -239,6 +239,22 @@ examples/
 - bleak >= 0.20.0（BLE库）
 - flet >= 0.20.0（GUI库，仅GUI客户端需要）
 
+## 变更记录
+
+### v1.2.1 (2025-07-13)
+
+**固件修复 (C)**:
+- `ble_srv_core.c`: 添加 `state_lock` 互斥锁保护 `s_conn_handle` / `s_advertising` 并发访问，修复 GAP 事件与广播状态竞争条件
+- `ble_srv_core.c`: `ble_hs_util_ensure_addr` 失败时返回错误并记录日志，替换 `assert` 防止设备崩溃
+- `ble_srv_led.c`: 所有信号量获取超时从 `portMAX_DELAY` 改为 `5000ms`，防止死锁
+
+**配置修复**:
+- `sdkconfig.defaults`: 修正配置项名 `CONFIG_BLE_SRV_NAME_PREFIX` -> `CONFIG_BLE_SRV_ADV_NAME_PREFIX`
+
+**GUI 客户端修复 (Python)**:
+- `ble_core.py`: 扫描方式改为 `BleakScanner` 回调方式，修复 macOS 下 RSSI 始终为 -100dBm 的问题
+- `ble_core.py`: 提取 `OTA_ERROR_NAMES` 常量，消除重复定义
+
 ## License
 
 Apache License 2.0

@@ -131,6 +131,7 @@ python tools/client.py scan [--timeout 5]
 - 不指定 `-d` 时列出所有 BLE 设备
 - 指定 `-d <前缀>` 时只列出名称匹配前缀的设备
 - RSSI 值表示信号强度（越接近 0 信号越强）
+- 跨平台支持：Windows (WinRT) 和 macOS (CoreBluetooth)
 
 ### 2. 设备信息 (info)
 

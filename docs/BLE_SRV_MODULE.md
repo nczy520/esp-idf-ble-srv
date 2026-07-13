@@ -880,6 +880,7 @@ Offset 5: blue
 1. nvs_flash_init()                          // NVS 初始化（必需）
 2. ble_srv_wifi_provisioner_init()           // WiFi 配网初始化（如启用，必须在 BLE init 前）
 3. ble_srv_init()                            // BLE 服务初始化（内部初始化各子模块）
+   ├─ 创建 state_lock（保护 s_conn_handle / s_advertising）
    ├─ ble_srv_common_init()                 // 公共层（创建互斥锁）
    ├─ ble_srv_bt_init()                     // NimBLE 初始化（GAP/GATT）
    ├─ ble_srv_ota_common_init()             // OTA 公共层
@@ -897,15 +898,20 @@ Offset 5: blue
 2. ble_srv_led_deinit()                     // LED 停止特效任务
 3. ble_srv_wifi_provisioner_deinit()        // WiFi 配网
 4. ble_srv_deinit()                         // BLE 服务反初始化
+   ├─ 销毁 state_lock
+   └─ ...
 ```
 
 ### 锁顺序约定
 
 为避免死锁，必须遵守以下锁获取顺序：
-1. `bt_lock`（递归互斥锁，保护 BLE 连接状态）
-2. `ota_lock`（保护 OTA 会话状态）
+1. `state_lock`（互斥锁，保护 `s_conn_handle` / `s_advertising`）
+2. `bt_lock`（递归互斥锁，保护 BLE 连接状态）
+3. `ota_lock`（保护 OTA 会话状态）
 
-**重要**: 调用外部 common 函数（如 `ble_srv_ota_finish`）前需先释放 `bt_lock`，外部函数自行获取 `ota_lock`。
+**重要**:
+- GAP 事件回调中访问 `s_conn_handle` / `s_advertising` 前必须获取 `state_lock`
+- 调用外部 common 函数（如 `ble_srv_ota_finish`）前需先释放 `bt_lock`，外部函数自行获取 `ota_lock`
 
 ---
 
@@ -933,10 +939,11 @@ Offset 5: blue
 
 ### BLE 连接注意
 
-15. 共享变量（如 `s_conn_handle`, `s_advertising`）必须声明为 `volatile`
-16. Windows BLE 客户端连接必须使用 `use_cached=False`
-17. 设备断开连接时必须唤醒所有等待 ACK 的协程
-18. 所有静态变量的访问必须通过互斥锁保护
+15. 共享变量（`s_conn_handle`, `s_advertising`）使用 `volatile` 声明，**并必须通过 `state_lock` 互斥锁保护**（GAP 事件回调和 start/stop advertising 中）
+16. `ble_hs_util_ensure_addr` 失败时返回错误并记录日志，**禁止**使用 `assert` 导致设备崩溃
+17. Windows BLE 客户端连接必须使用 `use_cached=False`
+18. 设备断开连接时必须唤醒所有等待 ACK 的协程
+19. 所有静态变量的访问必须通过互斥锁保护
 
 ### 内存与资源
 
@@ -948,9 +955,10 @@ Offset 5: blue
 
 ### LED 注意
 
-24. LED 驱动 deinit 时必须先设置 `s_initialized=false`，等待 effect task 退出后再释放 RMT 资源
-25. 颜色通道顺序为 **RGB**，禁止使用 GRB
-26. WS2812 GPIO 配置需根据芯片型号选择，参考 menuconfig 默认值
+25. LED 驱动 deinit 时必须先设置 `s_initialized=false`，等待 effect task 退出后再释放 RMT 资源
+26. 颜色通道顺序为 **RGB**，禁止使用 GRB
+27. WS2812 GPIO 配置需根据芯片型号选择，参考 menuconfig 默认值
+28. LED 模块所有信号量获取必须使用超时（`LED_LOCK_TIMEOUT_MS = 5000ms`），**禁止**使用 `portMAX_DELAY` 防止死锁
 
 ### 代码规范
 
@@ -975,7 +983,10 @@ Offset 5: blue
 
 ### Q: 广播名称不是 "BLE-SRV-XXXXXX"？
 
-**A**: 检查 menuconfig 中 `Component config → BLE Service → Device Name Prefix` 设置。
+**A**:
+1. 检查 menuconfig 中 `Component config → BLE Service → Device Name Prefix` 设置
+2. **注意**: `sdkconfig.defaults` 中配置项名必须为 `CONFIG_BLE_SRV_ADV_NAME_PREFIX`（不是 `CONFIG_BLE_SRV_NAME_PREFIX`）
+3. 如果之前做过 OTA，设备可能从旧的 OTA 分区启动。需执行 `idf.py erase-flash` 擦除后重新烧录
 
 ### Q: OTA 提示 "No OTA partition"？
 
