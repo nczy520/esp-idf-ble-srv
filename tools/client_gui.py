@@ -25,7 +25,7 @@ ESP32 BLE Device Manager - Flet GUI Client v1.2.1
   8. GUI窗口大小固定为1280x800，不支持缩放
 """
 
-__version__ = "1.2.2"
+__version__ = "1.3.0"
 
 import sys
 import os

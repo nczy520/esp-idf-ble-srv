@@ -3,20 +3,23 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Version](https://img.shields.io/badge/version-1.2.2-blueviolet)](ble_srv/idf_component.yml)
+[![Version](https://img.shields.io/badge/version-1.3.0-blueviolet)](ble_srv/idf_component.yml)
 
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 1.2.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 1.3.0 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
 - **设备信息查询** — 芯片型号、Flash 大小、MAC 地址、固件版本、CPU 频率、核心数、温度、运行时间、重启原因
 - **内存/CPU/Flash/分区监控** — 堆内存使用、任务数、CPU使用率、分区列表、运行分区信息
-- **OTA 固件升级** — 蓝牙/URL双模式、12包滑动窗口ACK协议、CRC32校验、断连自动重置、进度通知、版本检查
+- **OTA 固件升级** — 蓝牙/URL双模式、12包滑动窗口ACK协议、CRC32校验、断连自动重置、进度通知、版本检查、OTA日志实时推送
 - **WiFi 配网** — BLE 写入 SSID/密码，NVS 持久化，凭据删除，NTP 同步
 - **WS2812 LED 控制** — RGB 颜色设置、呼吸灯/闪烁/彩虹/频闪特效（非阻塞切换）
+- **应用层认证** — BLE连接后通过密码写入GATT特征进行认证，认证失败主动断开
+- **设备日志推送** — OTA升级过程中的详细日志通过BLE NOTIFY实时推送到客户端
+- **自定义命令** — 新增0xFFEA自定义命令GATT特征（WRITE+NOTIFY），支持第三方应用扩展功能
 - **设备重启** — BLE 远程重启
 
 ## 支持芯片
@@ -30,7 +33,7 @@ ESP32 / ESP32-S2 / ESP32-S3 / ESP32-C3 / ESP32-C6 / ESP32-H2
 将 `ble_srv` 目录复制到你的项目 `components/` 下，或通过 ESP-IDF 组件管理器引入：
 
 ```bash
-idf.py add-dependency "ble_srv^1.2.1"
+idf.py add-dependency "ble_srv^1.3.0"
 ```
 
 ### 2. 配置 menuconfig
@@ -43,6 +46,8 @@ idf.py menuconfig
 Component config → BLE Service:
   [*] Enable BLE Service
       Name prefix (BLE-SRV)          # BLE 广播名前缀
+  [*] Enable BLE Authentication      # 应用层认证（可选）
+      PIN code (112233)              # 认证密码
   [*] Enable WiFi Provisioner        # WiFi 配网（可选）
   [*] Enable NTP Time Sync           # NTP 同步（可选）
   [*] Enable WS2812 LED Control      # LED 控制（可选）
@@ -73,7 +78,7 @@ idf.py build flash monitor
 
 | 服务 | UUID | 功能 | 条件编译 |
 |------|------|------|----------|
-| Device Service | 0xFFE0 | 设备信息、重启 | 默认启用 |
+| Device Service | 0xFFE0 | 设备信息、重启、认证、日志、自定义命令 | 默认启用 |
 | OTA Service | 0xFFD0 | 固件升级 | 默认启用 |
 | WiFi Service | 0xFFC0 | WiFi 配网 | CONFIG_BLE_SRV_WIFI_PROVISIONER |
 | LED Service | 0xFFB0 | LED 控制 | CONFIG_BLE_SRV_LED |
@@ -197,8 +202,8 @@ docs/
   PYTHON_CLI.md            # CLI客户端详细使用说明
   PYTHON_GUI.md            # GUI客户端详细使用说明
 tools/
-  client.py                # Python BLE 命令行客户端 v1.2.1
-  client_gui.py            # Python BLE GUI 客户端入口 v1.2.1
+  client.py                # Python BLE 命令行客户端 v1.3.0
+  client_gui.py            # Python BLE GUI 客户端入口 v1.3.0
   client/                  # CLI客户端核心模块
   client_gui/              # GUI客户端模块
 examples/
@@ -240,6 +245,23 @@ examples/
 - flet >= 0.20.0（GUI库，仅GUI客户端需要）
 
 ## 变更记录
+
+### v1.3.0 (2025-07-14)
+
+**新增功能 (C 固件)**:
+- **应用层认证**: 新增 `0xFFE8` 认证特征，BLE 连接后客户端需写入密码认证，认证失败设备主动断开连接
+- **设备日志推送**: 新增 `0xFFE9` LOG 特征（NOTIFY），OTA 升级过程中的详细日志实时推送到客户端
+- **自定义命令**: 新增 `0xFFEA` 自定义命令特征（WRITE+NOTIFY），支持第三方应用注册回调处理自定义协议
+- `ble_srv_gatt.c`: 新增 `ble_srv_gatt_set_custom_cmd_callback()` 和 `ble_srv_gatt_custom_cmd_notify()` API
+
+**客户端增强 (Python)**:
+- **GUI 自定义命令 Tab**: 新增通讯日志显示区、命令输入框、ASCII/HEX 格式切换、定时循环发送（支持 10ms-60s 间隔）
+- **PIN 码输入**: GUI 左侧面板新增密码输入框，CLI 新增 `--pin` 参数
+- **设备日志订阅**: GUI 自动订阅设备日志通知并显示在 BLE 传输日志面板
+- **连接安全**: 连接成功后自动发送 PIN 认证作为第一个 GATT 命令
+
+**示例项目**:
+- `examples/basic`: 更新 sdkconfig，新增认证配置 `CONFIG_BLE_SRV_AUTH_ENABLED` 和 `CONFIG_BLE_SRV_AUTH_PIN`
 
 ### v1.2.1 (2025-07-13)
 

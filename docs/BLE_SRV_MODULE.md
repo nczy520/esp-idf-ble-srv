@@ -1,4 +1,4 @@
-# ble_srv 模组使用说明 v1.2.1
+# ble_srv 模组使用说明 v1.3.0
 
 ## 目录
 
@@ -27,7 +27,7 @@
 
 `ble_srv` 是基于 ESP-IDF NimBLE 协议栈的 BLE（蓝牙低功耗）服务组件，为 ESP32 系列芯片提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。组件采用模块化设计，各功能可通过 menuconfig 独立开关。
 
-**版本**: 1.2.1
+**版本**: 1.3.0
 **协议栈**: NimBLE（ESP-IDF 内置）
 **兼容**: ESP-IDF v5.x / v6.x（推荐 v6.0+）
 
@@ -56,10 +56,23 @@
 - ✅ CRC32 完整性校验
 - ✅ 固件版本检查（防降级/重复刷入）
 - ✅ 进度通知
+- ✅ OTA 详细日志实时推送（通过 0xFFE9 NOTIFY）
 - ✅ 断连自动重置状态
 - ✅ 中止命令支持
 - ✅ APPLY_OK 后 3 秒自动重启
 - ✅ 终态自动重置（支持多次 OTA）
+
+### 应用层认证
+- ✅ BLE 连接后密码写入认证（0xFFE8）
+- ✅ 认证失败主动断开连接
+- ✅ 密码通过 menuconfig 配置
+- ✅ 每次连接都需重新认证
+
+### 自定义命令
+- ✅ 0xFFEA 自定义命令 GATT 特征（WRITE + NOTIFY）
+- ✅ 第三方应用可注册回调处理自定义协议
+- ✅ 支持通过 NOTIFY 返回响应数据
+- ✅ 方便功能扩展而不修改核心代码
 
 ### WiFi 配网
 - ✅ BLE 写入 SSID/密码
@@ -137,7 +150,7 @@ cp -r ble_srv your_project/components/
 或通过 ESP-IDF 组件管理器添加：
 
 ```bash
-idf.py add-dependency "ble_srv^1.2.1"
+idf.py add-dependency "ble_srv^1.3.0"
 ```
 
 ### 2. 配置项目
@@ -273,6 +286,18 @@ Partition Table → Partition Table → Factory app, two OTA definitions
 | `BLE_SRV_OTA_URL_SKIP_CERT_CHECK` | bool | n | 跳过 HTTPS 证书验证（仅测试用） |
 
 **安全警告**: `BLE_SRV_OTA_URL_SKIP_CERT_CHECK` 会禁用所有服务器身份验证，仅用于自签名证书测试，生产环境禁止启用。
+
+### 认证配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `BLE_SRV_AUTH_ENABLED` | bool | n | 启用应用层认证 |
+| `BLE_SRV_AUTH_PIN` | string | "112233" | 认证密码（最大16字节） |
+
+**认证流程**:
+1. 客户端连接后向 `0xFFE8` 特征写入密码
+2. 设备验证密码，失败则发送 `0x00` 通知并断开连接
+3. 认证成功后解锁其他 GATT 特征操作
 
 ### WiFi 配置
 
@@ -527,6 +552,61 @@ bool ble_srv_wifi_get_status(ble_wifi_status_t *status);
 
 ---
 
+### 自定义命令 API（ble_srv_gatt.h）
+
+#### ble_srv_gatt_set_custom_cmd_callback
+
+```c
+void ble_srv_gatt_set_custom_cmd_callback(ble_srv_custom_cmd_cb_t cb);
+```
+
+注册自定义命令处理回调函数。
+
+**参数**:
+- `cb` — 回调函数指针，格式为 `int callback(uint16_t conn_handle, const uint8_t *data, uint16_t data_len, uint8_t *resp_buf, uint16_t resp_buf_size, uint16_t *out_resp_len)`
+
+**回调返回值**:
+- `0` — 处理成功，如有响应数据则通过 NOTIFY 发送
+- 非 `0` — 处理失败，不发送响应
+
+**使用示例**:
+
+```c
+static int my_custom_handler(uint16_t conn_handle, const uint8_t *data, uint16_t data_len,
+                              uint8_t *resp_buf, uint16_t resp_buf_size, uint16_t *out_resp_len)
+{
+    // 处理接收到的自定义命令
+    if (data_len >= 1 && data[0] == 0x01) {
+        // 构造响应
+        resp_buf[0] = 0x01;
+        resp_buf[1] = 0xAA;
+        *out_resp_len = 2;
+        return 0;  // 成功，将通过 NOTIFY 发送响应
+    }
+    return -1;  // 失败
+}
+
+// 初始化时注册
+ble_srv_gatt_set_custom_cmd_callback(my_custom_handler);
+```
+
+#### ble_srv_gatt_custom_cmd_notify
+
+```c
+bool ble_srv_gatt_custom_cmd_notify(uint16_t conn_handle, const uint8_t *data, uint16_t data_len);
+```
+
+主动发送自定义命令通知数据到客户端。
+
+**参数**:
+- `conn_handle` — BLE 连接句柄
+- `data` — 要发送的数据指针
+- `data_len` — 数据长度
+
+**返回值**:
+- `true` — 发送成功
+- `false` — 发送失败（未订阅或句柄无效）
+
 ### NTP API（ble_srv_wifi.h，需要 CONFIG_BLE_SRV_NTP_ENABLED）
 
 #### ble_srv_ntp_sync
@@ -636,7 +716,10 @@ bool ble_srv_led_get_status(ble_led_status_t *status);
 | CPU Characteristic | 0xFFE4 | Read | CPU信息（41字节） |
 | Flash Characteristic | 0xFFE5 | Read | Flash信息（26字节） |
 | Partition Characteristic | 0xFFE7 | Write/Read | 分区索引写入/分区信息读取 |
-| Restart Characteristic | 0xFFE6 | Write | 写入 0x01 触发重启 |
+| Restart Characteristic | 0xFFE6 | Write/Notify | 写入 0x01 触发重启 |
+| Auth Characteristic | 0xFFE8 | Read/Write/Notify | 应用层认证（密码写入） |
+| Log Characteristic | 0xFFE9 | Notify | 设备日志推送（OTA日志等） |
+| Custom Cmd Characteristic | 0xFFEA | Write/Notify | 自定义命令（第三方扩展） |
 
 ### OTA Service（OTA服务）
 
@@ -1067,6 +1150,8 @@ Partition Table → Partition Table → Factory app, two OTA definitions
 | `LED` | WS2812 LED 驱动 |
 | `DEVICE` | 设备信息采集 |
 | `TEMP_SENSOR` | 温度传感器 |
+| `AUTH` | 应用层认证 |
+| `CUSTOM_CMD` | 自定义命令 |
 
 ### 启用调试日志
 
