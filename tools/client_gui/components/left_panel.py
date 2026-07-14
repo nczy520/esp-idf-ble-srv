@@ -23,7 +23,7 @@ class LeftPanelComponent(BaseComponent):
         """扫描时间选择变化"""
         self.scan_timeout_value = e.control.data
         # 更新按钮显示的文本
-        self.scan_timeout_btn.content.content.value = e.control.text
+        self.scan_timeout_btn.content.content.content.value = e.control.content.value
         self.scan_timeout_btn.update()
 
     def get_scan_timeout(self):
