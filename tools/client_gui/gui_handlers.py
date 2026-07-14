@@ -12,6 +12,7 @@ from client_gui.handlers.led_control import LEDControlHandler
 from client_gui.handlers.wifi_control import WiFiControlHandler
 from client_gui.handlers.ota_control import OTAControlHandler
 from client_gui.handlers.custom_cmd_control import CustomCmdHandler
+from client_gui.handlers.log_control import LogControlHandler
 
 
 class GuiHandlers:
@@ -27,6 +28,7 @@ class GuiHandlers:
         self.device_info = DeviceInfoHandler(app)
         self.led_control = LEDControlHandler(app)
         self.wifi_control = WiFiControlHandler(app)
+        self.log_control = LogControlHandler(app)
         self.ota_control = OTAControlHandler(app)
         self.custom_cmd = CustomCmdHandler(app)
 
@@ -38,6 +40,7 @@ class GuiHandlers:
         self.device_info.set_ui(ui)
         self.led_control.set_ui(ui)
         self.wifi_control.set_ui(ui)
+        self.log_control.set_ui(ui)
         self.ota_control.set_ui(ui)
         self.custom_cmd.set_ui(ui)
 
@@ -117,6 +120,13 @@ class GuiHandlers:
 
     def wifi_ntp(self, event=None):
         self.wifi_control.wifi_ntp(event)
+
+    # === 日志控制（委托给LogControlHandler）===
+    def refresh_log_list(self, event=None):
+        self.log_control.refresh_log_list()
+
+    def download_log_file(self, event=None):
+        pass
 
     # === OTA升级（委托给OTAControlHandler）===
     def pick_firmware(self, event=None):

@@ -11,6 +11,7 @@
 #include "ble_srv_led.h"
 #include "ble_srv_device.h"
 #include "ble_srv_temp_sensor.h"
+#include "ble_srv_log.h"
 
 #ifdef __cplusplus
 extern "C" {

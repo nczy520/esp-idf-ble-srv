@@ -10,6 +10,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "wifi_provisioner.h"
+#include "ble_srv_log.h"
 
 static const char *TAG = "BLE_SRV_WIFI";
 
@@ -154,6 +155,7 @@ bool ble_srv_wifi_provisioner_init(void)
 
     s_initialized = true;
     ESP_LOGI(TAG, "WiFi provisioner initialized");
+    BLE_SRV_LOGI(TAG, "WiFi provisioner initialized");
     return true;
 }
 
@@ -171,10 +173,12 @@ bool ble_srv_wifi_auto_connect(void)
 
     if (wifi_prov_is_connected()) {
         ESP_LOGI(TAG, "WiFi already connected");
+        BLE_SRV_LOGI(TAG, "WiFi already connected");
         return true;
     }
 
     ESP_LOGI(TAG, "Auto-connecting to saved WiFi...");
+    BLE_SRV_LOGI(TAG, "Auto-connecting to saved WiFi...");
 
     destroy_orphan_sta_netif();
 
@@ -197,6 +201,7 @@ void ble_srv_wifi_provisioner_deinit(void)
     wifi_prov_stop();
     s_initialized = false;
     ESP_LOGI(TAG, "WiFi provisioner deinitialized");
+    BLE_SRV_LOGI(TAG, "WiFi provisioner deinitialized");
 }
 
 bool ble_srv_wifi_connect(const char *ssid, const char *password)
@@ -207,6 +212,7 @@ bool ble_srv_wifi_connect(const char *ssid, const char *password)
     }
 
     ESP_LOGI(TAG, "Connecting to WiFi: %s", ssid);
+    BLE_SRV_LOGI(TAG, "Connecting to WiFi: %s", ssid);
 
     init_obf_key();
 
@@ -254,11 +260,13 @@ bool ble_srv_wifi_connect(const char *ssid, const char *password)
     err = wifi_prov_start(&s_prov_config);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_prov_start failed: %s", esp_err_to_name(err));
+        BLE_SRV_LOGE(TAG, "wifi_prov_start failed: %s", esp_err_to_name(err));
         return false;
     }
 
     s_initialized = true;
     ESP_LOGI(TAG, "WiFi provisioner started with new credentials");
+    BLE_SRV_LOGI(TAG, "WiFi provisioner started with new credentials");
     return true;
 }
 
@@ -270,6 +278,7 @@ bool ble_srv_wifi_forget(void)
     }
 
     ESP_LOGI(TAG, "Forgetting WiFi credentials");
+    BLE_SRV_LOGI(TAG, "Forgetting WiFi credentials");
 
     wifi_prov_stop();
     s_initialized = false;
@@ -292,6 +301,7 @@ bool ble_srv_wifi_forget(void)
     esp_wifi_stop();
 
     ESP_LOGI(TAG, "WiFi credentials erased, disconnected");
+    BLE_SRV_LOGI(TAG, "WiFi credentials erased, disconnected");
     return true;
 }
 

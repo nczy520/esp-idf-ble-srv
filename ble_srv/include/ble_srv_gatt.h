@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "host/ble_gatt.h"
+#include "ble_srv_log.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,13 +30,6 @@ bool ble_srv_gatt_is_conn_authenticated(uint16_t conn_handle);
 void ble_srv_gatt_set_conn_authenticated(uint16_t conn_handle, bool authed);
 void ble_srv_gatt_clear_auth_state(uint16_t conn_handle);
 uint16_t ble_srv_gatt_get_auth_chr_val_handle(void);
-
-typedef enum {
-    BLE_SRV_LOG_LEVEL_INFO  = 'I',
-    BLE_SRV_LOG_LEVEL_WARN  = 'W',
-    BLE_SRV_LOG_LEVEL_ERROR = 'E',
-    BLE_SRV_LOG_LEVEL_DEBUG = 'D',
-} ble_srv_log_level_t;
 
 bool ble_srv_gatt_log_notify_enabled(void);
 void ble_srv_gatt_set_log_notify_enabled(bool enabled);

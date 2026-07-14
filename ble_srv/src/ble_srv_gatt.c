@@ -5,6 +5,7 @@
 #include "ble_srv_device.h"
 #include "ble_srv_wifi.h"
 #include "ble_srv_led.h"
+#include "ble_srv_log.h"
 #include "ble_srv.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "host/ble_hs.h"
 #include "host/ble_gatt.h"
 
@@ -27,7 +29,9 @@ static SemaphoreHandle_t s_gatt_lock = NULL;
 #define GATT_UNLOCK() do { if (s_gatt_lock) xSemaphoreGive(s_gatt_lock); } while(0)
 
 static uint8_t s_partition_index = 0;
-static uint8_t s_write_buf[512];
+#define BLE_SRV_GATT_WRITE_BUF_SIZE 512
+#define BLE_SRV_GATT_SELECTED_FILE_SIZE 64
+static uint8_t *s_write_buf = NULL;
 
 static uint16_t s_srv_cmd_chr_val_handle = 0;
 static uint16_t s_srv_info_chr_val_handle = 0;
@@ -70,6 +74,12 @@ static uint16_t s_srv_custom_cmd_chr_val_handle = 0;
 static bool s_custom_cmd_notify_enabled = false;
 static ble_srv_custom_cmd_cb_t s_custom_cmd_cb = NULL;
 
+static uint16_t s_srv_log_file_list_chr_val_handle = 0;
+static uint16_t s_srv_log_file_content_chr_val_handle = 0;
+static uint16_t s_srv_log_file_download_chr_val_handle = 0;
+static uint16_t s_srv_log_http_ctrl_chr_val_handle = 0;
+static char *s_selected_log_file = NULL;
+
 static const ble_uuid16_t s_srv_svc_uuid          = BLE_UUID16_INIT(BLE_SRV_SVC_UUID);
 static const ble_uuid16_t s_srv_cmd_chr_uuid      = BLE_UUID16_INIT(BLE_SRV_CMD_CHAR_UUID);
 static const ble_uuid16_t s_srv_info_chr_uuid     = BLE_UUID16_INIT(BLE_SRV_INFO_CHAR_UUID);
@@ -85,6 +95,10 @@ static const ble_uuid16_t s_srv_auth_chr_uuid      = BLE_UUID16_INIT(BLE_SRV_AUT
 
 static const ble_uuid16_t s_srv_log_chr_uuid       = BLE_UUID16_INIT(BLE_SRV_LOG_CHAR_UUID);
 static const ble_uuid16_t s_srv_custom_cmd_chr_uuid = BLE_UUID16_INIT(BLE_SRV_CUSTOM_CMD_CHAR_UUID);
+static const ble_uuid16_t s_srv_log_file_list_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_LIST_CHAR_UUID);
+static const ble_uuid16_t s_srv_log_file_content_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_CONTENT_CHAR_UUID);
+static const ble_uuid16_t s_srv_log_file_download_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_DOWNLOAD_CHAR_UUID);
+static const ble_uuid16_t s_srv_log_http_ctrl_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_HTTP_CTRL_CHAR_UUID);
 
 static const ble_uuid16_t s_ota_svc_uuid          = BLE_UUID16_INIT(BLE_OTA_SVC_UUID);
 static const ble_uuid16_t s_ota_bt_cmd_chr_uuid   = BLE_UUID16_INIT(BLE_OTA_BT_CMD_CHAR_UUID);
@@ -173,6 +187,30 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_srv_custom_cmd_chr_val_handle,
+            },
+            {
+                .uuid = &s_srv_log_file_list_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_READ,
+                .val_handle = &s_srv_log_file_list_chr_val_handle,
+            },
+            {
+                .uuid = &s_srv_log_file_content_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .val_handle = &s_srv_log_file_content_chr_val_handle,
+            },
+            {
+                .uuid = &s_srv_log_file_download_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_srv_log_file_download_chr_val_handle,
+            },
+            {
+                .uuid = &s_srv_log_http_ctrl_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .val_handle = &s_srv_log_http_ctrl_chr_val_handle,
             },
             { 0 },
         },
@@ -276,6 +314,7 @@ static void ble_srv_auth_fail_disconnect(uint16_t conn_handle)
         ble_gatts_notify_custom(conn_handle, s_srv_auth_chr_val_handle, om);
     }
     ESP_LOGW(TAG, "Unauthenticated access, disconnecting (conn=%d)", conn_handle);
+    BLE_SRV_LOGW(TAG, "Unauthenticated access, disconnecting (conn=%d)", conn_handle);
     ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
 }
 #endif
@@ -339,6 +378,86 @@ static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct bl
             return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
         return BLE_ATT_ERR_UNLIKELY;
+    } else if (attr_handle == s_srv_log_file_list_chr_val_handle) {
+        ble_srv_log_file_info_t *files = heap_caps_malloc(sizeof(ble_srv_log_file_info_t) * BLE_SRV_LOG_FILE_LIST_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!files) files = heap_caps_malloc(sizeof(ble_srv_log_file_info_t) * BLE_SRV_LOG_FILE_LIST_MAX, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (!files) {
+            return BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
+        int count = ble_srv_log_get_file_list(files, BLE_SRV_LOG_FILE_LIST_MAX);
+        if (count > 0) {
+            uint8_t count_byte = (uint8_t)count;
+            rc = os_mbuf_append(ctxt->om, &count_byte, sizeof(count_byte));
+            if (rc != 0) { heap_caps_free(files); return BLE_ATT_ERR_INSUFFICIENT_RES; }
+            for (int i = 0; i < count; i++) {
+                rc = os_mbuf_append(ctxt->om, &files[i], sizeof(files[i]));
+                if (rc != 0) { heap_caps_free(files); return BLE_ATT_ERR_INSUFFICIENT_RES; }
+            }
+            heap_caps_free(files);
+            return 0;
+        }
+        heap_caps_free(files);
+        uint8_t zero = 0;
+        rc = os_mbuf_append(ctxt->om, &zero, sizeof(zero));
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    } else if (attr_handle == s_srv_log_file_content_chr_val_handle) {
+        if (s_selected_log_file[0]) {
+            char *buffer = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!buffer) buffer = heap_caps_malloc(1024, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (!buffer) {
+                return BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+            int read_len = ble_srv_log_read_file(s_selected_log_file, buffer, 1024);
+            if (read_len >= 0) {
+                if (read_len == 0) {
+                    const char *empty_msg = "(empty file)";
+                    rc = os_mbuf_append(ctxt->om, empty_msg, strlen(empty_msg));
+                } else {
+                    rc = os_mbuf_append(ctxt->om, buffer, read_len);
+                }
+                heap_caps_free(buffer);
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+            heap_caps_free(buffer);
+            ESP_LOGE(TAG, "Failed to read log file: %s", s_selected_log_file);
+            BLE_SRV_LOGE(TAG, "Failed to read log file: %s", s_selected_log_file);
+        }
+        return BLE_ATT_ERR_UNLIKELY;
+    } else if (attr_handle == s_srv_log_http_ctrl_chr_val_handle) {
+        uint8_t running = ble_srv_log_http_is_running() ? 1 : 0;
+        rc = os_mbuf_append(ctxt->om, &running, sizeof(running));
+        if (rc != 0) return BLE_ATT_ERR_INSUFFICIENT_RES;
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
+        if (running) {
+            ble_wifi_status_t wifi_status;
+            if (ble_srv_wifi_get_status(&wifi_status) && wifi_status.connected) {
+                uint8_t ip_bytes[4];
+                ip_bytes[0] = (wifi_status.ip_address >> 0) & 0xFF;
+                ip_bytes[1] = (wifi_status.ip_address >> 8) & 0xFF;
+                ip_bytes[2] = (wifi_status.ip_address >> 16) & 0xFF;
+                ip_bytes[3] = (wifi_status.ip_address >> 24) & 0xFF;
+                char url[64];
+                int url_len = snprintf(url, sizeof(url), "http://%u.%u.%u.%u:%d/",
+                                       (unsigned)ip_bytes[0], (unsigned)ip_bytes[1],
+                                       (unsigned)ip_bytes[2], (unsigned)ip_bytes[3],
+                                       BLE_SRV_LOG_HTTP_PORT);
+                uint8_t url_len_byte = (uint8_t)url_len;
+                rc = os_mbuf_append(ctxt->om, &url_len_byte, sizeof(url_len_byte));
+                if (rc != 0) return BLE_ATT_ERR_INSUFFICIENT_RES;
+                rc = os_mbuf_append(ctxt->om, url, url_len);
+                if (rc != 0) return BLE_ATT_ERR_INSUFFICIENT_RES;
+            } else {
+                uint8_t zero = 0;
+                rc = os_mbuf_append(ctxt->om, &zero, sizeof(zero));
+                if (rc != 0) return BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+        }
+#else
+        uint8_t zero = 0;
+        rc = os_mbuf_append(ctxt->om, &zero, sizeof(zero));
+        if (rc != 0) return BLE_ATT_ERR_INSUFFICIENT_RES;
+#endif
+        return 0;
     }
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED
     else if (attr_handle == s_wifi_status_chr_val_handle) {
@@ -397,8 +516,10 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
         GATT_UNLOCK();
         if (match) {
             ESP_LOGI(TAG, "PIN authentication success (conn=%d)", conn_handle);
+            BLE_SRV_LOGI(TAG, "PIN authentication success (conn=%d)", conn_handle);
         } else {
             ESP_LOGW(TAG, "PIN authentication failed (conn=%d)", conn_handle);
+            BLE_SRV_LOGW(TAG, "PIN authentication failed (conn=%d)", conn_handle);
         }
         return match ? 0 : BLE_ATT_ERR_UNLIKELY;
     }
@@ -465,6 +586,7 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
     else if (attr_handle == s_srv_cmd_chr_val_handle) {
         ble_srv_cmd_t cmd = (ble_srv_cmd_t)data[0];
         ESP_LOGI(TAG, "SRV command: 0x%02X", cmd);
+        BLE_SRV_LOGI(TAG, "SRV command: 0x%02X", cmd);
         switch (cmd) {
         case BLE_SRV_CMD_RESTART:
             ble_srv_schedule_restart(GATT_RESTART_CMD_DELAY_MS);
@@ -503,6 +625,7 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
             char password[65] = {0};
             memcpy(ssid, data + 1, ssid_len);
             memcpy(password, data + 1 + ssid_len + 1, pass_len);
+            BLE_SRV_LOGI(TAG, "WiFi config write, SSID: %s", ssid);
             ble_srv_wifi_connect(ssid, password);
         }
     } else if (attr_handle == s_wifi_ctrl_chr_val_handle) {
@@ -526,6 +649,7 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
     else if (attr_handle == s_led_ctrl_chr_val_handle) {
         ble_led_ctrl_t ctrl = (ble_led_ctrl_t)data[0];
+        BLE_SRV_LOGI(TAG, "LED control command: %d", (int)ctrl);
         if (ctrl == BLE_LED_CTRL_ON) {
             ble_srv_led_set_on(true);
         } else if (ctrl == BLE_LED_CTRL_OFF) {
@@ -545,6 +669,7 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
     }
 #endif
     else if (attr_handle == s_srv_custom_cmd_chr_val_handle) {
+        BLE_SRV_LOGI(TAG, "Custom command received (len=%d)", data_len);
         if (s_custom_cmd_cb) {
             uint8_t resp_buf[512];
             uint16_t resp_len = 0;
@@ -555,6 +680,47 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
                 if (om) {
                     ble_gatts_notify_custom(conn_handle, s_srv_custom_cmd_chr_val_handle, om);
                 }
+            }
+        }
+    } else if (attr_handle == s_srv_log_file_content_chr_val_handle) {
+        if (data_len > 0 && data_len <= BLE_SRV_GATT_SELECTED_FILE_SIZE - 1) {
+            memset(s_selected_log_file, 0, BLE_SRV_GATT_SELECTED_FILE_SIZE);
+            memcpy(s_selected_log_file, data, data_len);
+            ESP_LOGI(TAG, "Selected log file: %s", s_selected_log_file);
+        }
+    } else if (attr_handle == s_srv_log_file_download_chr_val_handle) {
+        if (s_selected_log_file[0]) {
+            char *buffer = heap_caps_malloc(512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!buffer) buffer = heap_caps_malloc(512, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (buffer) {
+                int read_len = ble_srv_log_read_file(s_selected_log_file, buffer, 512);
+                if (read_len > 0) {
+                    struct os_mbuf *om = ble_hs_mbuf_from_flat(buffer, read_len);
+                    if (om) {
+                        ble_gatts_notify_custom(conn_handle, s_srv_log_file_download_chr_val_handle, om);
+                    }
+                }
+                heap_caps_free(buffer);
+            }
+        }
+    } else if (attr_handle == s_srv_log_http_ctrl_chr_val_handle) {
+        if (data_len > 0) {
+            uint8_t cmd = data[0];
+            if (cmd == BLE_SRV_LOG_HTTP_CMD_START) {
+                ESP_LOGI(TAG, "HTTP server start requested");
+                BLE_SRV_LOGI(TAG, "HTTP server start requested");
+                ble_srv_log_http_start();
+            } else if (cmd == BLE_SRV_LOG_HTTP_CMD_STOP) {
+                ESP_LOGI(TAG, "HTTP server stop requested");
+                BLE_SRV_LOGI(TAG, "HTTP server stop requested");
+                ble_srv_log_http_stop();
+            } else if (cmd == BLE_SRV_LOG_HTTP_CMD_WRITE_LOG && data_len > 1) {
+                char msg[256];
+                uint16_t msg_len = data_len - 1;
+                if (msg_len > sizeof(msg) - 1) msg_len = sizeof(msg) - 1;
+                memcpy(msg, data + 1, msg_len);
+                msg[msg_len] = '\0';
+                BLE_SRV_LOGI("CLIENT", "%s", msg);
             }
         }
     }
@@ -571,7 +737,7 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
     case BLE_GATT_ACCESS_OP_WRITE_CHR: {
         uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
-        if (om_len == 0 || om_len > sizeof(s_write_buf)) {
+        if (om_len == 0 || om_len > BLE_SRV_GATT_WRITE_BUF_SIZE) {
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
 
@@ -596,6 +762,14 @@ const struct ble_gatt_svc_def *ble_srv_get_gatt_svcs(void)
 
 void ble_srv_gatt_deinit(void)
 {
+    if (s_write_buf) {
+        heap_caps_free(s_write_buf);
+        s_write_buf = NULL;
+    }
+    if (s_selected_log_file) {
+        heap_caps_free(s_selected_log_file);
+        s_selected_log_file = NULL;
+    }
     if (s_gatt_lock) {
         vSemaphoreDelete(s_gatt_lock);
         s_gatt_lock = NULL;
@@ -607,6 +781,16 @@ bool ble_srv_gatt_init_lock(void)
     if (s_gatt_lock) return true;
     s_gatt_lock = xSemaphoreCreateMutex();
     if (!s_gatt_lock) return false;
+
+    s_write_buf = heap_caps_malloc(BLE_SRV_GATT_WRITE_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_write_buf) s_write_buf = heap_caps_malloc(BLE_SRV_GATT_WRITE_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_write_buf) { vSemaphoreDelete(s_gatt_lock); s_gatt_lock = NULL; return false; }
+
+    s_selected_log_file = heap_caps_malloc(BLE_SRV_GATT_SELECTED_FILE_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_selected_log_file) s_selected_log_file = heap_caps_malloc(BLE_SRV_GATT_SELECTED_FILE_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_selected_log_file) { heap_caps_free(s_write_buf); s_write_buf = NULL; vSemaphoreDelete(s_gatt_lock); s_gatt_lock = NULL; return false; }
+    memset(s_selected_log_file, 0, BLE_SRV_GATT_SELECTED_FILE_SIZE);
+
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
     const char *pin = CONFIG_BLE_SRV_AUTH_PIN;
     size_t pin_len = strlen(pin);
@@ -756,6 +940,18 @@ void ble_srv_gatt_set_log_conn_handle(uint16_t conn_handle)
     s_log_conn_handle = conn_handle;
 }
 
+static char ble_srv_gatt_log_level_char(ble_srv_log_level_t level)
+{
+    switch (level) {
+    case BLE_SRV_LOG_LEVEL_ERROR:   return 'E';
+    case BLE_SRV_LOG_LEVEL_WARN:    return 'W';
+    case BLE_SRV_LOG_LEVEL_INFO:    return 'I';
+    case BLE_SRV_LOG_LEVEL_DEBUG:   return 'D';
+    case BLE_SRV_LOG_LEVEL_VERBOSE: return 'V';
+    default:                        return 'I';
+    }
+}
+
 void ble_srv_gatt_log_send_raw(ble_srv_log_level_t level, const char *msg)
 {
     if (!s_log_notify_enabled || s_srv_log_chr_val_handle == 0) {
@@ -769,8 +965,8 @@ void ble_srv_gatt_log_send_raw(ble_srv_log_level_t level, const char *msg)
         return;
     }
 
-    char line[BLE_SRV_LOG_MAX_LEN + 8];
-    int prefix_len = snprintf(line, sizeof(line), "[%c] ", (char)level);
+    static char line[BLE_SRV_LOG_MAX_LEN + 8];
+    int prefix_len = snprintf(line, sizeof(line), "[%c] ", ble_srv_gatt_log_level_char(level));
     if (prefix_len < 0 || prefix_len >= (int)sizeof(line)) {
         prefix_len = 0;
     }
@@ -797,7 +993,7 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
         return;
     }
 
-    char body[BLE_SRV_LOG_MAX_LEN];
+    static char body[BLE_SRV_LOG_MAX_LEN];
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(body, sizeof(body), fmt, ap);
@@ -806,7 +1002,7 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
         return;
     }
 
-    char line[BLE_SRV_LOG_MAX_LEN + 32];
+    static char line[BLE_SRV_LOG_MAX_LEN + 32];
     int written;
     if (tag && tag[0]) {
         written = snprintf(line, sizeof(line), "[%c] [%s] %s", (char)level, tag, body);

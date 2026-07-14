@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_mac.h"
+#include "ble_srv_log.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -108,13 +109,16 @@ static void ble_srv_start_advertising(void)
         s_advertising = true;
         STATE_UNLOCK();
         ESP_LOGI(TAG, "BLE advertising started");
+        BLE_SRV_LOGI(TAG, "BLE advertising started");
     } else if (rc == BLE_HS_EALREADY) {
         s_advertising = true;
         STATE_UNLOCK();
         ESP_LOGW(TAG, "BLE already advertising");
+        BLE_SRV_LOGW(TAG, "BLE already advertising");
     } else {
         STATE_UNLOCK();
         ESP_LOGE(TAG, "ble_gap_adv_start failed: rc=%d", rc);
+        BLE_SRV_LOGE(TAG, "ble_gap_adv_start failed: rc=%d", rc);
     }
 }
 
@@ -123,6 +127,7 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         ESP_LOGI(TAG, "CONNECT: status=%d", event->connect.status);
+        BLE_SRV_LOGI(TAG, "CONNECT: status=%d", event->connect.status);
         STATE_LOCK();
         if (event->connect.conn_handle != BLE_HS_CONN_HANDLE_NONE) {
             s_conn_handle = event->connect.conn_handle;
@@ -138,6 +143,7 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
+        BLE_SRV_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
         STATE_LOCK();
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
@@ -164,6 +170,8 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_SUBSCRIBE:
         ESP_LOGI(TAG, "SUBSCRIBE: attr=%d, notify=%d",
                  event->subscribe.attr_handle, event->subscribe.cur_notify);
+        BLE_SRV_LOGI(TAG, "SUBSCRIBE: attr=%d, notify=%d",
+                      event->subscribe.attr_handle, event->subscribe.cur_notify);
         if (event->subscribe.attr_handle == ble_srv_gatt_get_ota_status_chr_val_handle()) {
             ble_srv_gatt_set_ota_status_notify_enabled(event->subscribe.cur_notify);
         }
@@ -221,6 +229,8 @@ static void ble_srv_on_sync(void)
     if (rc == 0) {
         ESP_LOGI(TAG, "BLE address: %02X:%02X:%02X:%02X:%02X:%02X",
                  addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
+        BLE_SRV_LOGI(TAG, "BLE address: %02X:%02X:%02X:%02X:%02X:%02X",
+                      addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
     }
 
     ble_srv_start_advertising();
@@ -229,6 +239,7 @@ static void ble_srv_on_sync(void)
 static void ble_srv_on_reset(int reason)
 {
     ESP_LOGE(TAG, "NimBLE host reset: reason=%d", reason);
+    BLE_SRV_LOGE(TAG, "NimBLE host reset: reason=%d", reason);
 }
 
 static void ble_srv_host_task(void *param)
@@ -240,6 +251,7 @@ static void ble_srv_host_task(void *param)
 bool ble_srv_init(void)
 {
     ESP_LOGI(TAG, "Initializing BLE Service (NimBLE)");
+    BLE_SRV_LOGI(TAG, "Initializing BLE Service (NimBLE)");
 
     uint8_t mac[6];
     esp_err_t ret = esp_read_mac(mac, ESP_MAC_BT);
@@ -359,12 +371,14 @@ bool ble_srv_init(void)
     }
 
     ESP_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);
+    BLE_SRV_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);
     return true;
 }
 
 void ble_srv_deinit(void)
 {
     ESP_LOGI(TAG, "Deinitializing BLE Service");
+    BLE_SRV_LOGI(TAG, "Deinitializing BLE Service");
 
     ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
     vTaskDelay(pdMS_TO_TICKS(BLE_OTA_DEINIT_WAIT_MS));
@@ -419,6 +433,8 @@ uint16_t ble_srv_get_conn_handle(void)
 
 void ble_srv_schedule_restart(uint32_t delay_ms)
 {
+    BLE_SRV_LOGI(TAG, "Device restart scheduled in %lu ms", (unsigned long)delay_ms);
+
     if (!s_restart_timer) {
         s_restart_timer = xTimerCreate("srv_rboot", pdMS_TO_TICKS(delay_ms),
                                         pdFALSE, NULL, restart_timer_cb);

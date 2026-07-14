@@ -144,6 +144,48 @@ class BleDeviceManager:
         fut.add_done_callback(_done)
         return fut
 
+    def ui_call(self, fn):
+        """在UI线程执行函数"""
+        if self.page:
+            self.page.run_thread(fn)
+        else:
+            fn()
+
+    def show_snack(self, message):
+        """显示Snack通知"""
+        def _show():
+            try:
+                self.page.open(ft.SnackBar(content=ft.Text(message), duration=2000))
+            except Exception:
+                print(f"[Snack] {message}")
+        self.ui_call(_show)
+
+    def show_loading_overlay(self, overlay, message="处理中..."):
+        """显示加载覆盖层"""
+        def _show():
+            try:
+                if hasattr(overlay, 'content'):
+                    if hasattr(overlay.content, 'controls') and len(overlay.content.controls) > 1:
+                        if hasattr(overlay.content.controls[1], 'value'):
+                            overlay.content.controls[1].value = message
+                    elif hasattr(overlay.content, 'value'):
+                        overlay.content.value = message
+                overlay.visible = True
+                self.page.update()
+            except Exception as e:
+                print(f"show_loading_overlay error: {e}")
+        self.ui_call(_show)
+
+    def hide_loading_overlay(self, overlay):
+        """隐藏加载覆盖层"""
+        def _hide():
+            try:
+                overlay.visible = False
+                self.page.update()
+            except Exception as e:
+                print(f"hide_loading_overlay error: {e}")
+        self.ui_call(_hide)
+
     def main(self, page: ft.Page):
         page.title = f"BLE Device Manager v{self.version} | support@mdeve.com"
         page.window.width = 1280

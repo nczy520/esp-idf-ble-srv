@@ -48,6 +48,12 @@ from .constants import (
     BLE_OTA_URL_CMD_START_URL,
     BLE_OTA_URL_CMD_START_DEFAULT,
     BLE_OTA_URL_CMD_ABORT,
+    BLE_DM_LOG_FILE_LIST_CHAR_UUID,
+    BLE_DM_LOG_FILE_CONTENT_CHAR_UUID,
+    BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID,
+    BLE_DM_LOG_HTTP_CTRL_CHAR_UUID,
+    BLE_LOG_HTTP_CMD_START,
+    BLE_LOG_HTTP_CMD_STOP,
     parse_esp_fw_version,
 )
 from .models import (
@@ -851,3 +857,64 @@ class BLEDeviceClient:
 
     async def ota_url_start_default(self):
         return await self.ota_url(None)
+
+    async def get_log_file_list(self):
+        data = await self._read_gatt(BLE_DM_LOG_FILE_LIST_CHAR_UUID, "日志文件列表")
+        if not data or len(data) < 1:
+            return []
+        count = data[0]
+        files = []
+        offset = 1
+        for _ in range(count):
+            if offset + 72 > len(data):
+                break
+            name = data[offset:offset + 64].decode('utf-8', errors='replace').strip('\x00')
+            size = struct.unpack('<I', data[offset + 64:offset + 68])[0]
+            mtime = struct.unpack('<I', data[offset + 68:offset + 72])[0]
+            files.append({"name": name, "size": size, "mtime": mtime})
+            offset += 72
+        return files
+
+    async def select_log_file(self, filename):
+        if not filename:
+            return False
+        data = filename.encode('utf-8')
+        return await self._write_gatt(BLE_DM_LOG_FILE_CONTENT_CHAR_UUID, data, name="日志文件选择")
+
+    async def read_log_file(self):
+        data = await self._read_gatt(BLE_DM_LOG_FILE_CONTENT_CHAR_UUID, "日志文件内容")
+        if data:
+            return data.decode('utf-8', errors='replace')
+        return None
+
+    async def download_log_file(self, filename, save_path=None):
+        if not await self.select_log_file(filename):
+            return False
+        await asyncio.sleep(0.1)
+        content = await self.read_log_file()
+        if not content:
+            return False
+        if save_path is None:
+            save_path = filename
+        with open(save_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"日志文件已保存: {save_path}")
+        return True
+
+    async def log_http_start(self):
+        return await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, bytes([BLE_LOG_HTTP_CMD_START]), name="日志HTTP服务器启动")
+
+    async def log_http_stop(self):
+        return await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, bytes([BLE_LOG_HTTP_CMD_STOP]), name="日志HTTP服务器停止")
+
+    async def log_http_get_status(self):
+        data = await self._read_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, "日志HTTP服务器状态")
+        if not data or len(data) < 1:
+            return {"running": False, "url": ""}
+        running = data[0] == 1
+        url = ""
+        if len(data) >= 2:
+            url_len = data[1]
+            if url_len > 0 and len(data) >= 2 + url_len:
+                url = data[2:2 + url_len].decode('utf-8', errors='replace')
+        return {"running": running, "url": url}

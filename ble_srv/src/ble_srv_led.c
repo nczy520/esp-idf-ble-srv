@@ -8,6 +8,7 @@
 #include "freertos/semphr.h"
 #include "driver/rmt_tx.h"
 #include "hal/gpio_types.h"
+#include "ble_srv_log.h"
 
 static const char *TAG = "BLE_SRV_LED";
 
@@ -379,6 +380,7 @@ bool ble_srv_led_init(void)
     s_effect_task = NULL;
 
     ESP_LOGI(TAG, "WS2812 LED initialized on GPIO %d", BLE_LED_GPIO);
+    BLE_SRV_LOGI(TAG, "LED initialized on GPIO %d", BLE_LED_GPIO);
     return true;
 }
 
@@ -413,6 +415,7 @@ void ble_srv_led_deinit(void)
     }
 
     ESP_LOGI(TAG, "LED deinitialized");
+    BLE_SRV_LOGI(TAG, "LED deinitialized");
 }
 
 bool ble_srv_led_set_on(bool on)
@@ -445,6 +448,7 @@ bool ble_srv_led_set_on(bool on)
     }
 
     ESP_LOGI(TAG, "LED %s", on ? "ON" : "OFF");
+    BLE_SRV_LOGI(TAG, "LED %s", on ? "ON" : "OFF");
     return true;
 }
 
@@ -488,6 +492,7 @@ bool ble_srv_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
     }
 
     ESP_LOGI(TAG, "LED RGB set: R=%d, G=%d, B=%d", red, green, blue);
+    BLE_SRV_LOGI(TAG, "LED RGB set: R=%d, G=%d, B=%d", red, green, blue);
     return true;
 }
 
@@ -535,6 +540,7 @@ bool ble_srv_led_set_effect(ble_led_effect_t effect, uint8_t speed)
     }
 
     ESP_LOGI(TAG, "LED effect set: %d, speed=%d", effect, speed);
+    BLE_SRV_LOGI(TAG, "LED effect set: %d, speed=%d", effect, speed);
     return true;
 }
 

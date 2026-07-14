@@ -183,6 +183,102 @@ menu "BLE Service"
                 Default values per target: ESP32-S3=21, ESP32-C3/C6/H2=10, ESP32=2, ESP32-S2=18
     endmenu
 
+    menu "Log System"
+        config BLE_SRV_LOG_ENABLED
+            bool "Enable Log System"
+            default n
+            help
+                Enable log system that stores logs to SPIFFS or SD card.
+                Logs can be browsed and downloaded via HTTP server or BLE.
+
+        config BLE_SRV_LOG_SD_ENABLED
+            bool "Enable SD Card Support"
+            default n
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Enable SD card storage support for log system.
+                When enabled, the log system will try to use SD card first.
+
+        config BLE_SRV_LOG_SD_PATH
+            string "SD Card Mount Path"
+            default "/sdcard"
+            depends on BLE_SRV_LOG_SD_ENABLED
+            help
+                Mount path for SD card storage.
+
+        config BLE_SRV_LOG_SPIFFS_PATH
+            string "SPIFFS Mount Path"
+            default "/spiffs"
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Mount path for SPIFFS storage.
+
+        config BLE_SRV_LOG_DIR
+            string "Log Directory Name"
+            default "/log"
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Directory name under storage path for log files.
+
+        config BLE_SRV_LOG_QUEUE_SIZE
+            int "Log Queue Size (entries)"
+            default 1024
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Number of log entries that can be buffered in the queue.
+                Queue storage is allocated from PSRAM, so large queues are fine.
+                Larger queue reduces chance of log loss under heavy logging load.
+
+        config BLE_SRV_LOG_LINE_SIZE
+            int "Maximum Log Line Size (bytes)"
+            default 512
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Maximum size of a single log line in bytes.
+
+        config BLE_SRV_LOG_FLUSH_INTERVAL_MS
+            int "Flush Interval (ms)"
+            default 1000
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Interval in milliseconds between periodic log flushes to file.
+                Smaller interval means more frequent writes but less data loss
+                on crash. Larger interval is more efficient but risks more data loss.
+
+        config BLE_SRV_LOG_MAX_FILES
+            int "Maximum Log Files"
+            default 50
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Maximum number of log files to keep. When limit is reached,
+                the oldest log file will be deleted automatically.
+
+        config BLE_SRV_LOG_MIN_FREE_SPACE
+            int "Minimum Free Space (KB)"
+            default 256
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Minimum free space in KB that must be available on the storage
+                partition. Log system will not start if free space is below this
+                threshold, and will delete oldest files to maintain it.
+
+        config BLE_SRV_LOG_MAX_FILE_SIZE
+            int "Maximum Log File Size (KB)"
+            default 512
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Maximum size of each log file in KB. When a log file exceeds
+                this size, a new log file will be created automatically.
+
+        config BLE_SRV_LOG_HTTP_PORT
+            int "HTTP Server Port"
+            default 8080
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Port number for the log HTTP server. The server provides
+                a web interface to browse and download log files.
+    endmenu
+
     menu "Temperature Sensor"
         config BLE_SRV_TEMP_SENSOR_ENABLED
             bool "Enable Temperature Sensor"

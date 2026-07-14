@@ -11,6 +11,7 @@ from client_gui.components.log_panel import LogPanelComponent
 from client_gui.components.tabs.info_tab import InfoTabComponent
 from client_gui.components.tabs.led_tab import LEDTabComponent
 from client_gui.components.tabs.wifi_tab import WiFiTabComponent
+from client_gui.components.tabs.log_tab import LogTabComponent
 from client_gui.components.tabs.ota_tab import OTATabComponent
 from client_gui.components.tabs.custom_cmd_tab import CustomCmdTabComponent
 
@@ -75,6 +76,13 @@ class GuiComponents:
         self.wifi_display = wifi_tab_comp.wifi_display
         self.wifi_overlay = wifi_tab_comp.wifi_overlay
 
+        log_tab_comp = LogTabComponent(self.app)
+        log_tab = log_tab_comp.build()
+        self.log_tab = log_tab_comp
+        self.log_file_list = log_tab_comp.log_file_list
+        self.log_content_display = log_tab_comp.log_content_display
+        self.log_overlay = log_tab_comp.disconnected_overlay
+
         ota_tab_comp = OTATabComponent(self.app)
         ota_tab = ota_tab_comp.build()
         self.ota_tab = ota_tab_comp
@@ -97,8 +105,9 @@ class GuiComponents:
 
         # 构建TabBar
         self.tabs = ft.Tabs(
-            length=5,
+            length=6,
             expand=True,
+            on_change=self._on_tab_changed,
             content=ft.Column(
                 expand=True,
                 controls=[
@@ -107,6 +116,7 @@ class GuiComponents:
                             ft.Tab(label="设备信息", icon=ft.Icons.INFO_OUTLINE),
                             ft.Tab(label="LED 控制", icon=ft.Icons.LIGHTBULB_OUTLINE),
                             ft.Tab(label="WiFi", icon=ft.Icons.WIFI),
+                            ft.Tab(label="日志", icon=ft.Icons.ARTICLE_OUTLINED),
                             ft.Tab(label="OTA 升级", icon=ft.Icons.SYSTEM_UPDATE),
                             ft.Tab(label="自定义命令", icon=ft.Icons.CODE),
                         ],
@@ -114,7 +124,7 @@ class GuiComponents:
                     ),
                     ft.TabBarView(
                         expand=True,
-                        controls=[info_tab, led_tab, wifi_tab, ota_tab, custom_cmd_tab],
+                        controls=[info_tab, led_tab, wifi_tab, log_tab, ota_tab, custom_cmd_tab],
                     ),
                 ],
             ),
@@ -158,3 +168,15 @@ class GuiComponents:
                 self.loading_overlay,
             ], expand=True)
         )
+
+    def _on_tab_changed(self, e):
+        """Tab切换时触发对应handler的on_tab_selected"""
+        try:
+            idx = e.control.selected_index if hasattr(e, 'control') else None
+            if idx is None:
+                return
+            handlers = self.app.handlers
+            if idx == 3:  # 日志Tab
+                handlers.log_control.on_tab_selected()
+        except Exception:
+            pass

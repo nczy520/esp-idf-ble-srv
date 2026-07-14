@@ -2,6 +2,7 @@
 #include "ble_srv_ota_common.h"
 #include "ble_srv_gatt.h"
 #include "ble_srv.h"
+#include "ble_srv_log.h"
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -120,6 +121,7 @@ void ble_srv_ota_bt_handle_abort(void)
         return;
     }
     ESP_LOGW(TAG, "Handling BT OTA abort, gen=%u", gen);
+    BLE_SRV_LOGW(TAG, "OTA abort, gen=%u", gen);
     bt_flush_and_finish(gen, BLE_OTA_STATE_ABORTED, BLE_OTA_ERR_ABORTED);
 }
 
@@ -222,9 +224,12 @@ static bool handle_start(const uint8_t *data, uint16_t len)
              (unsigned long)(req->fw_version >> 8) & 0xFF,
              (unsigned long)req->fw_version & 0xFF,
              gen);
+    BLE_SRV_LOGI(TAG, "OTA start: size=%lu, crc=0x%08lX, gen=%u",
+                 (unsigned long)s_fw_total_size, (unsigned long)s_fw_crc, gen);
 
     if (s_fw_total_size == 0 || s_fw_total_size > BLE_OTA_MAX_FW_SIZE) {
         ESP_LOGE(TAG, "Invalid fw size: %lu", (unsigned long)s_fw_total_size);
+        BLE_SRV_LOGE(TAG, "Start fail: invalid size %lu", (unsigned long)s_fw_total_size);
         bt_cleanup_locked();
         s_gen = BLE_OTA_INVALID_GEN;
         BT_UNLOCK();
@@ -235,6 +240,7 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     s_target_partition = esp_ota_get_next_update_partition(NULL);
     if (!s_target_partition) {
         ESP_LOGE(TAG, "No update partition");
+        BLE_SRV_LOGE(TAG, "Start fail: no update partition");
         bt_cleanup_locked();
         s_gen = BLE_OTA_INVALID_GEN;
         BT_UNLOCK();
@@ -261,6 +267,7 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     esp_err_t ret = esp_ota_begin(s_target_partition, s_fw_total_size, &s_ota_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "Start fail: ota_begin %s", esp_err_to_name(ret));
         bt_cleanup_locked();
         s_gen = BLE_OTA_INVALID_GEN;
         BT_UNLOCK();
@@ -331,6 +338,8 @@ static bool handle_verify(void)
     if (bytes_written != fw_total) {
         ESP_LOGE(TAG, "Size mismatch: written %lu != expected %lu",
                  (unsigned long)bytes_written, (unsigned long)fw_total);
+        BLE_SRV_LOGE(TAG, "Verify fail: size mismatch %lu != %lu",
+                     (unsigned long)bytes_written, (unsigned long)fw_total);
         bt_flush_and_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INVALID_SIZE);
         return false;
     }
@@ -339,6 +348,8 @@ static bool handle_verify(void)
              (unsigned long)expected_crc, (unsigned long)computed_crc);
     if (computed_crc != expected_crc) {
         ESP_LOGE(TAG, "CRC mismatch! Firmware data corrupted");
+        BLE_SRV_LOGE(TAG, "Verify fail: CRC mismatch exp=0x%08lX got=0x%08lX",
+                     (unsigned long)expected_crc, (unsigned long)computed_crc);
         bt_flush_and_finish(gen, BLE_OTA_STATE_VERIFY_FAIL, BLE_OTA_ERR_CRC_MISMATCH);
         return false;
     }
@@ -352,6 +363,7 @@ static bool handle_verify(void)
 
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "Verify fail: ota_end %s", esp_err_to_name(ret));
         bt_flush_and_finish(gen, BLE_OTA_STATE_VERIFY_FAIL, BLE_OTA_ERR_VERIFY_FAILED);
         return false;
     }
@@ -363,6 +375,7 @@ static bool handle_verify(void)
     ble_srv_ota_report_progress(gen, total_received, bytes_written);
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFY_OK, BLE_OTA_ERR_NONE);
     ESP_LOGI(TAG, "OTA verify OK");
+    BLE_SRV_LOGI(TAG, "Verify OK");
     return true;
 }
 
@@ -398,6 +411,7 @@ static bool handle_apply(void)
     esp_err_t ret = esp_ota_set_boot_partition(part);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Set boot failed: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "Apply fail: set boot %s", esp_err_to_name(ret));
         bt_flush_and_finish(gen, BLE_OTA_STATE_APPLY_FAIL, BLE_OTA_ERR_INTERNAL);
         return false;
     }
@@ -407,6 +421,7 @@ static bool handle_apply(void)
              boot ? boot->label : "?",
              boot ? (unsigned long)boot->address : 0);
 
+    BLE_SRV_LOGI(TAG, "Apply OK: %s", boot ? boot->label : "?");
     bt_flush_and_finish(gen, BLE_OTA_STATE_APPLY_OK, BLE_OTA_ERR_NONE);
     return true;
 }
@@ -488,6 +503,8 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     if (offset > s_total_received) {
         ESP_LOGW(TAG, "Out-of-order: got=%lu expected=%lu, sending NAK",
                  (unsigned long)offset, (unsigned long)s_total_received);
+        BLE_SRV_LOGW(TAG, "Out-of-order data: got=%lu exp=%lu",
+                     (unsigned long)offset, (unsigned long)s_total_received);
         uint32_t recv = s_total_received;
         uint32_t written = s_fw_bytes_written;
         BT_UNLOCK();
@@ -525,6 +542,7 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
             write_err = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
             if (write_err != ESP_OK) {
                 ESP_LOGE(TAG, "OTA write fail: %s", esp_err_to_name(write_err));
+                BLE_SRV_LOGE(TAG, "Flash write fail: %s", esp_err_to_name(write_err));
                 bt_cleanup_locked();
                 s_gen = BLE_OTA_INVALID_GEN;
                 BT_UNLOCK();
@@ -547,6 +565,7 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
         write_err = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
         if (write_err != ESP_OK) {
             ESP_LOGE(TAG, "OTA write fail: %s", esp_err_to_name(write_err));
+            BLE_SRV_LOGE(TAG, "Flash write fail: %s", esp_err_to_name(write_err));
             bt_cleanup_locked();
             s_gen = BLE_OTA_INVALID_GEN;
             BT_UNLOCK();

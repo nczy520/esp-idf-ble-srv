@@ -146,6 +146,10 @@ class BaseHandler:
             buttons.extend([
                 self.ui.custom_cmd_tab.send_btn,
             ])
+        if hasattr(self.ui, 'log_tab') and self.ui.log_tab:
+            buttons.extend([
+                self.ui.log_tab.refresh_btn,
+            ])
         return buttons
 
     def _get_excluded_buttons(self):

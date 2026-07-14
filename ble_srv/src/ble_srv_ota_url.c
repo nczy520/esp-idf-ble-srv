@@ -2,6 +2,7 @@
 #include "ble_srv_ota_common.h"
 #include "ble_srv_gatt.h"
 #include "ble_srv_wifi.h"
+#include "ble_srv_log.h"
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -33,7 +34,7 @@ static const char *TAG = "OTA_URL";
 #define HTTP_RANGE_BYTES      4095
 
 static volatile TaskHandle_t s_url_task = NULL;
-static char s_ota_url[BLE_OTA_URL_MAX_URL_LEN + 1] = {0};
+static char *s_ota_url = NULL;
 static bool s_initialized = false;
 
 #define FW_VER_MAX_SEGS 4
@@ -352,12 +353,15 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
     int cmp = fw_ver_compare(&rem_ver, &cur_ver);
     if (cmp > 0) {
         OTA_LOGI("Remote version %s > current %s, update needed", rem_str, cur_str);
+        BLE_SRV_LOGI(TAG, "Upgrade needed: %s -> %s", cur_str, rem_str);
         return VERSION_CHECK_PROCEED;
     } else if (cmp == 0) {
         OTA_LOGI("Remote version %s == current %s, already up to date", rem_str, cur_str);
+        BLE_SRV_LOGI(TAG, "Already latest version: %s", cur_str);
         return VERSION_CHECK_UP_TO_DATE;
     } else {
         OTA_LOGW("Remote version %s < current %s, downgrade rejected", rem_str, cur_str);
+        BLE_SRV_LOGW(TAG, "Downgrade rejected: %s -> %s", cur_str, rem_str);
         return VERSION_CHECK_DOWNGRADE;
     }
 }
@@ -375,6 +379,7 @@ static void url_task(void *arg)
     s_url_task = xTaskGetCurrentTaskHandle();
 
     OTA_LOGI("URL OTA task started: %s, gen=%u", s_ota_url, gen);
+    BLE_SRV_LOGI(TAG, "OTA task started: %s", s_ota_url);
 
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_CHECKING, BLE_OTA_ERR_NONE);
 
@@ -403,6 +408,7 @@ static void url_task(void *arg)
 
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_CHECK_OK, BLE_OTA_ERR_NONE);
     OTA_LOGI("Downloading: %s", s_ota_url);
+    BLE_SRV_LOGI(TAG, "Download started: %s", s_ota_url);
 
     esp_http_client_config_t http_cfg = {
         .url = s_ota_url,
@@ -484,6 +490,9 @@ static void url_task(void *arg)
                     ble_srv_ota_push_status(gen);
                     if (pct % 10 == 0) {
                         OTA_LOGI("Download progress: %d%% (%d / %d bytes)", pct, total_bytes, size);
+                        if (pct == 50 || pct == 100) {
+                            BLE_SRV_LOGI(TAG, "Download progress: %d%%", pct);
+                        }
                     }
                 }
             } else {
@@ -509,6 +518,7 @@ static void url_task(void *arg)
     if (ret == ESP_OK) {
         int total_bytes = esp_https_ota_get_image_len_read(h);
         OTA_LOGI("Download complete: %d bytes received, verifying firmware...", total_bytes);
+        BLE_SRV_LOGI(TAG, "Download complete: %d bytes", total_bytes);
         ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFYING, BLE_OTA_ERR_NONE);
 
         ret = esp_https_ota_finish(h);
@@ -517,10 +527,12 @@ static void url_task(void *arg)
             ble_srv_ota_set_state(gen, BLE_OTA_STATE_APPLYING, BLE_OTA_ERR_NONE);
             OTA_LOGI("Firmware verification and application successful!");
             OTA_LOGI("  New firmware will boot after restart");
+            BLE_SRV_LOGI(TAG, "OTA verify and apply success");
             url_task_finish(gen, BLE_OTA_STATE_APPLY_OK, BLE_OTA_ERR_NONE);
             return;
         } else {
             OTA_LOGE("Firmware verification failed: %s (0x%x)", esp_err_to_name(ret), ret);
+            BLE_SRV_LOGE(TAG, "OTA verify/apply failed: 0x%x", ret);
             switch (ret) {
             case ESP_ERR_OTA_VALIDATE_FAILED:
                 OTA_LOGE("  Reason: firmware image validation failed");
@@ -618,7 +630,15 @@ bool ble_srv_ota_url_init(void)
         return true;
     }
     s_url_task = NULL;
-    memset(s_ota_url, 0, sizeof(s_ota_url));
+
+    s_ota_url = heap_caps_malloc(BLE_OTA_URL_MAX_URL_LEN + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_ota_url) s_ota_url = heap_caps_malloc(BLE_OTA_URL_MAX_URL_LEN + 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_ota_url) {
+        OTA_LOGE("Failed to allocate OTA URL buffer");
+        return false;
+    }
+    memset(s_ota_url, 0, BLE_OTA_URL_MAX_URL_LEN + 1);
+
     s_initialized = true;
     return true;
 }
@@ -628,6 +648,7 @@ void ble_srv_ota_url_deinit(void)
     if (!s_initialized) {
         return;
     }
+    BLE_SRV_LOGI(TAG, "OTA deinit");
     if (s_url_task) {
         TaskHandle_t task = s_url_task;
         ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
@@ -641,6 +662,10 @@ void ble_srv_ota_url_deinit(void)
         }
         OTA_LOGW("URL OTA task did not exit in time, force deleting");
         vTaskDelete(task);
+    }
+    if (s_ota_url) {
+        heap_caps_free(s_ota_url);
+        s_ota_url = NULL;
     }
     s_initialized = false;
 }
@@ -668,8 +693,8 @@ bool ble_srv_ota_url_start(const char *url)
         return false;
     }
 
-    strncpy(s_ota_url, url, sizeof(s_ota_url) - 1);
-    s_ota_url[sizeof(s_ota_url) - 1] = '\0';
+    strncpy(s_ota_url, url, BLE_OTA_URL_MAX_URL_LEN);
+    s_ota_url[BLE_OTA_URL_MAX_URL_LEN] = '\0';
 
     TaskHandle_t task_handle = NULL;
     BaseType_t ok = xTaskCreate(url_task, "ota_url", OTA_URL_TASK_STACK,
@@ -684,6 +709,7 @@ bool ble_srv_ota_url_start(const char *url)
     s_url_task = task_handle;
 
     OTA_LOGI("URL OTA started: %s, gen=%u", url, gen);
+    BLE_SRV_LOGI(TAG, "OTA start initiated: %s", url);
     return true;
 }
 
@@ -692,6 +718,7 @@ void ble_srv_ota_url_handle_abort(void)
     if (ble_srv_ota_get_mode() != BLE_OTA_MODE_URL) {
         return;
     }
+    BLE_SRV_LOGW(TAG, "OTA abort");
     if (s_url_task) {
         xTaskNotifyGive(s_url_task);
     }

@@ -18,6 +18,7 @@
 #include "esp_private/esp_clk.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "ble_srv_log.h"
 
 static const char *TAG = "BLE_SRV_DEVICE";
 
@@ -273,6 +274,7 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
 void ble_srv_restart_device(void)
 {
     ESP_LOGI(TAG, "Restarting device...");
+    BLE_SRV_LOGI(TAG, "Device restart requested");
     ble_srv_schedule_restart(BLE_RESTART_DELAY_MS);
 }
 

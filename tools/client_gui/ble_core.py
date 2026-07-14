@@ -66,6 +66,14 @@ from client.constants import (
     BLE_OTA_URL_CMD_START_URL,
     BLE_OTA_URL_CMD_START_DEFAULT,
     BLE_OTA_URL_CMD_ABORT,
+    BLE_DM_LOG_FILE_LIST_CHAR_UUID,
+    BLE_DM_LOG_FILE_CONTENT_CHAR_UUID,
+    BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID,
+    BLE_DM_LOG_HTTP_CTRL_CHAR_UUID,
+    BLE_LOG_HTTP_CMD_STOP,
+    BLE_LOG_HTTP_CMD_START,
+    BLE_LOG_HTTP_CMD_STATUS,
+    BLE_LOG_HTTP_CMD_WRITE_LOG,
     parse_esp_fw_version,
 )
 from client.models import (
@@ -1161,3 +1169,112 @@ class BleCore:
                 self._ota_notify_started = False
         except Exception:
             pass
+
+    # ==================== 日志文件操作 ====================
+
+    async def get_log_file_list(self):
+        """获取日志文件列表，返回 [{"name":..., "size":..., "mtime":...}, ...]"""
+        import struct as _struct
+        data = await self._read_gatt(BLE_DM_LOG_FILE_LIST_CHAR_UUID)
+        if not data or len(data) < 1:
+            return []
+        count = data[0]
+        if count == 0:
+            return []
+        files = []
+        offset = 1
+        entry_size = 64 + 4 + 4  # name[64] + size(u32) + mtime(u32) = 72
+        for i in range(count):
+            if offset + entry_size > len(data):
+                break
+            name_bytes = data[offset:offset + 64]
+            name = name_bytes.split(b'\x00')[0].decode('utf-8', errors='replace')
+            size, mtime = _struct.unpack_from('<II', data, offset + 64)
+            files.append({"name": name, "size": size, "mtime": mtime})
+            offset += entry_size
+        self._log(f"获取到 {len(files)} 个日志文件", "rx")
+        return files
+
+    async def select_log_file(self, filename):
+        """选择日志文件（写入文件名到content特征）"""
+        name_bytes = filename.encode('utf-8')[:63]
+        await self._write_gatt(BLE_DM_LOG_FILE_CONTENT_CHAR_UUID, name_bytes)
+        self._log(f"已选择日志文件: {filename}", "tx")
+        return True
+
+    async def read_log_file(self):
+        """读取已选择的日志文件内容（最多1024字节）"""
+        data = await self._read_gatt(BLE_DM_LOG_FILE_CONTENT_CHAR_UUID)
+        if not data:
+            return None
+        content = data.decode('utf-8', errors='replace')
+        self._log(f"读取日志内容: {len(data)} bytes", "rx")
+        return content
+
+    async def download_log_file(self, filename, save_path):
+        """通过BLE下载日志文件（通知模式，每次512字节）"""
+        await self.select_log_file(filename)
+        received_data = bytearray()
+        done_event = asyncio.Event()
+
+        def _on_download_notify(sender, data: bytearray):
+            received_data.extend(data)
+            if len(data) < 512:
+                done_event.set()
+
+        try:
+            await self.ble_client.start_notify(BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID, _on_download_notify)
+            await self.ble_client.write_gatt_char(BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID, b'\x01')
+            try:
+                await asyncio.wait_for(done_event.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pass
+            await self.ble_client.stop_notify(BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID)
+            if received_data:
+                with open(save_path, 'wb') as f:
+                    f.write(bytes(received_data))
+                self._log(f"日志文件已下载: {filename} ({len(received_data)} bytes)", "success")
+                return True
+            return False
+        except Exception as e:
+            self._log(f"下载日志文件失败: {e}", "error")
+            return False
+
+    async def log_http_start(self):
+        """启动日志HTTP服务器"""
+        await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, bytes([BLE_LOG_HTTP_CMD_START]))
+        self._log("日志HTTP服务器启动命令已发送", "tx")
+        return True
+
+    async def log_http_stop(self):
+        """停止日志HTTP服务器"""
+        await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, bytes([BLE_LOG_HTTP_CMD_STOP]))
+        self._log("日志HTTP服务器停止命令已发送", "tx")
+        return True
+
+    async def log_http_get_status(self):
+        """获取日志HTTP服务器状态，返回 {"running": bool, "url": str}"""
+        data = await self._read_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID)
+        if not data or len(data) < 1:
+            return {"running": False, "url": ""}
+        running = data[0] == 1
+        url = ""
+        if len(data) >= 2 and data[1] > 0:
+            url = data[2:2 + data[1]].decode('utf-8', errors='replace')
+        self._log(f"HTTP状态: running={running}, url={url}", "rx")
+        return {"running": running, "url": url}
+
+    async def write_device_log(self, message: str):
+        """向设备端日志系统写入一条日志消息"""
+        if not self._is_connected:
+            return False
+        try:
+            msg_bytes = message.encode('utf-8')
+            data = bytes([BLE_LOG_HTTP_CMD_WRITE_LOG]) + msg_bytes
+            await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, data)
+            return True
+        except Exception as e:
+            self._log(f"写入设备日志失败: {e}", "err")
+            return False
+
+
