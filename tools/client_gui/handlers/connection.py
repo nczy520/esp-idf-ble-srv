@@ -84,6 +84,9 @@ class ConnectionHandler(BaseHandler):
             self.ui.connect_toggle_btn.disabled = False
             self._set_overlays_visible(False)
             self._start_conn_time_updater()
+            # 已连接时禁用扫描按钮
+            self.ui.scan_btn.disabled = True
+            self.ui.scan_timeout_btn.disabled = True
         else:
             self._stop_conn_time_updater()
             if self._selected_device_name and self._selected_device_addr:
@@ -100,6 +103,10 @@ class ConnectionHandler(BaseHandler):
             self.ui.connect_toggle_btn.bgcolor = ft.Colors.BLUE
             self.ui.connect_toggle_btn.disabled = (device is None)
             self._set_overlays_visible(True)
+            # 断开后恢复扫描按钮（扫描进行中除外）
+            if not self.scan_lock:
+                self.ui.scan_btn.disabled = False
+            self.ui.scan_timeout_btn.disabled = False
         
         for addr, btn in self._device_connect_btns.items():
             if connected and addr == connected_address:
@@ -289,6 +296,7 @@ class ConnectionHandler(BaseHandler):
         if self.ble.connected:
             self.log("已连接设备，请先断开", "warn")
             return
+        pin = self.ui.pin_field.value.strip() if self.ui.pin_field else None
         self.log(f"正在连接 {device['name']}...", "info")
         self.ble_log(f"连接到 {device['name']} ({device['address']})", "info")
         btn = self.ui.connect_toggle_btn
@@ -309,7 +317,7 @@ class ConnectionHandler(BaseHandler):
                 self.ble_log(f"连接失败: {mtu_or_err}", "error")
                 self.update_connection_ui(False)
 
-        self._run_with_loading(btn, self.ble.connect_device(device), callback, loading_text="连接中...", timeout=10)
+        self._run_with_loading(btn, self.ble.connect_device(device, pin=pin), callback, loading_text="连接中...", timeout=15)
 
     def handle_disconnect(self, event=None):
         """断开连接"""

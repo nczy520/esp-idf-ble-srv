@@ -14,6 +14,10 @@
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 
+#define OTA_LOGI(...) do { ESP_LOGI(TAG, __VA_ARGS__); ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_INFO,  TAG, __VA_ARGS__); } while(0)
+#define OTA_LOGW(...) do { ESP_LOGW(TAG, __VA_ARGS__); ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_WARN,  TAG, __VA_ARGS__); } while(0)
+#define OTA_LOGE(...) do { ESP_LOGE(TAG, __VA_ARGS__); ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_ERROR, TAG, __VA_ARGS__); } while(0)
+
 static const char *TAG = "OTA_URL";
 
 #define OTA_URL_TASK_STACK    8192
@@ -138,14 +142,14 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
     fw_ver_t cur_ver;
     fw_ver_parse(esp_app_get_description()->version, &cur_ver);
     if (!cur_ver.valid) {
-        ESP_LOGW(TAG, "Cannot parse current version '%s', skipping version check",
+        OTA_LOGW("Cannot parse current version '%s', skipping version check",
                  esp_app_get_description()->version);
         return VERSION_CHECK_SKIP;
     }
 
     char cur_str[32];
     fw_ver_to_string(&cur_ver, cur_str, sizeof(cur_str));
-    ESP_LOGI(TAG, "Current version: %s (parsed %u segments)", cur_str, cur_ver.nsegs);
+    OTA_LOGI("Current version: %s (parsed %u segments)", cur_str, cur_ver.nsegs);
 
     if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) return VERSION_CHECK_ABORT;
 
@@ -164,7 +168,7 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
-        ESP_LOGE(TAG, "HTTP client init failed, skipping version check");
+        OTA_LOGE("HTTP client init failed, skipping version check");
         return VERSION_CHECK_SKIP;
     }
 
@@ -174,7 +178,7 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "HTTP open failed: %s (0x%x), skipping version check", esp_err_to_name(err), err);
+        OTA_LOGW("HTTP open failed: %s (0x%x), skipping version check", esp_err_to_name(err), err);
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return VERSION_CHECK_SKIP;
@@ -188,28 +192,60 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 
     int64_t fetch_ret = esp_http_client_fetch_headers(client);
     if (fetch_ret < 0) {
-        ESP_LOGW(TAG, "HTTP fetch headers failed: %s (%lld), skipping version check",
+        OTA_LOGW("HTTP fetch headers failed: %s (%lld), skipping version check",
                  esp_err_to_name((esp_err_t)fetch_ret), (long long)fetch_ret);
         int64_t clen = esp_http_client_get_content_length(client);
-        ESP_LOGW(TAG, "  content_length=%lld", (long long)clen);
+        OTA_LOGW("  content_length=%lld", (long long)clen);
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return VERSION_CHECK_SKIP;
     }
 
     int sc = esp_http_client_get_status_code(client);
-    ESP_LOGI(TAG, "Version check HTTP %d, content_length=%lld", sc,
-             (long long)esp_http_client_get_content_length(client));
+    int64_t clen = esp_http_client_get_content_length(client);
+    OTA_LOGI("Version check HTTP %d, content_length=%lld", sc, (long long)clen);
 
-    if (sc == 404 || sc == 416 || sc >= 500) {
-        ESP_LOGW(TAG, "HTTP server error: %d, skipping version check", sc);
+    if (sc == 404) {
+        OTA_LOGE("HTTP 404 Not Found: firmware file does not exist at URL");
+        OTA_LOGE("  URL: %s", fw_url);
+        OTA_LOGE("  Check that the firmware file is uploaded and the URL is correct");
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return VERSION_CHECK_SKIP;
     }
-
+    if (sc == 416) {
+        OTA_LOGE("HTTP 416 Range Not Satisfiable: server does not support Range requests");
+        OTA_LOGE("  Expected range: bytes=0-%u", HTTP_RANGE_BYTES);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return VERSION_CHECK_SKIP;
+    }
+    if (sc == 401 || sc == 403) {
+        OTA_LOGE("HTTP %d %s: authentication required or access denied",
+                 sc, (sc == 401) ? "Unauthorized" : "Forbidden");
+        OTA_LOGE("  The firmware URL requires authentication, which is not supported");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return VERSION_CHECK_SKIP;
+    }
+    if (sc >= 500 && sc < 600) {
+        OTA_LOGE("HTTP %d Server Error: server is unable to serve the firmware", sc);
+        OTA_LOGE("  URL: %s", fw_url);
+        OTA_LOGE("  This may be temporary, try again later");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return VERSION_CHECK_SKIP;
+    }
+    if (sc >= 300 && sc < 400) {
+        OTA_LOGE("HTTP %d Redirect: redirects are not followed for version check", sc);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return VERSION_CHECK_SKIP;
+    }
     if (sc != 200 && sc != 206) {
-        ESP_LOGW(TAG, "Unexpected HTTP status: %d, skipping version check", sc);
+        OTA_LOGE("Unexpected HTTP status: %d", sc);
+        OTA_LOGE("  Expected 200 (OK) or 206 (Partial Content)");
+        OTA_LOGE("  URL: %s", fw_url);
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return VERSION_CHECK_SKIP;
@@ -218,7 +254,7 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
     uint8_t *hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!hdr) hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!hdr) {
-        ESP_LOGW(TAG, "Header alloc failed, skipping version check");
+        OTA_LOGW("Header alloc failed, skipping version check");
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return VERSION_CHECK_SKIP;
@@ -229,13 +265,13 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
     while (total < FW_HEADER_BUF_SIZE && !ble_srv_ota_is_abort_requested() && ble_srv_ota_gen_valid(gen)) {
         int r = esp_http_client_read(client, (char *)(hdr + total), FW_HEADER_BUF_SIZE - total);
         if (r < 0) {
-            ESP_LOGW(TAG, "HTTP read error: %d, got %d bytes", r, total);
+            OTA_LOGW("HTTP read error: %d, got %d bytes", r, total);
             break;
         }
         if (r == 0) {
             zero_read_count++;
             if (zero_read_count >= HTTP_READ_STALL_COUNT) {
-                ESP_LOGW(TAG, "HTTP read stalled after %d bytes", total);
+                OTA_LOGW("HTTP read stalled after %d bytes", total);
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(HTTP_READ_TICK_MS));
@@ -252,43 +288,76 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
         return VERSION_CHECK_ABORT;
     }
 
+    if (total < (int)sizeof(esp_image_header_t)) {
+        OTA_LOGE("HTTP response too short: only %d bytes (need at least %u for image header)",
+                 total, (unsigned)sizeof(esp_image_header_t));
+        OTA_LOGE("  The URL may not be pointing to a valid ESP32 firmware binary");
+        OTA_LOGE("  Check URL: %s", fw_url);
+        heap_caps_free(hdr);
+        return VERSION_CHECK_SKIP;
+    }
+
+    esp_image_header_t img_hdr;
+    memcpy(&img_hdr, hdr, sizeof(img_hdr));
+    if (img_hdr.magic != ESP_IMAGE_HEADER_MAGIC) {
+        OTA_LOGE("Invalid firmware: bad magic byte 0x%02x (expected 0x%02x)",
+                 img_hdr.magic, ESP_IMAGE_HEADER_MAGIC);
+        OTA_LOGE("  The file at URL is not a valid ESP32 firmware image");
+        OTA_LOGE("  First 16 bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+                 hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7],
+                 hdr[8], hdr[9], hdr[10], hdr[11], hdr[12], hdr[13], hdr[14], hdr[15]);
+        heap_caps_free(hdr);
+        return VERSION_CHECK_SKIP;
+    }
+
+    OTA_LOGI("Image header valid: magic=0x%02x, segments=%u, entry=0x%08lx, spi_mode=%u",
+             img_hdr.magic, img_hdr.segment_count, (unsigned long)img_hdr.entry_addr, img_hdr.spi_mode);
+
     if (total < (int)sizeof(esp_app_desc_t)) {
-        ESP_LOGW(TAG, "Header too short (%d bytes), cannot verify version, proceeding", total);
+        OTA_LOGW("Header too short for app descriptor (%d bytes), cannot verify version, proceeding anyway", total);
         heap_caps_free(hdr);
         return VERSION_CHECK_SKIP;
     }
 
     esp_app_desc_t rd;
     if (!find_app_desc(hdr, total, &rd)) {
-        ESP_LOGW(TAG, "Could not find app descriptor in header, skipping version check");
+        OTA_LOGE("Could not find app descriptor (magic word 0x%08x) in firmware header",
+                 ESP_APP_DESC_MAGIC_WORD);
+        OTA_LOGE("  Read %d bytes from URL but app_desc_t structure not found", total);
+        OTA_LOGE("  This firmware may be corrupt or built for a different platform");
         heap_caps_free(hdr);
         return VERSION_CHECK_SKIP;
     }
 
-    ESP_LOGI(TAG, "Remote firmware: version='%s'", rd.version);
+    OTA_LOGI("Remote firmware info:");
+    OTA_LOGI("  version    : %s", rd.version);
+    OTA_LOGI("  project    : %s", rd.project_name);
+    OTA_LOGI("  idf-ver    : %s", rd.idf_ver);
+    OTA_LOGI("  secure-ver : %lu", (unsigned long)rd.secure_version);
+    OTA_LOGI("  compiled   : %s %s", rd.date, rd.time);
 
     fw_ver_t rem_ver;
     fw_ver_parse(rd.version, &rem_ver);
     heap_caps_free(hdr);
 
     if (!rem_ver.valid) {
-        ESP_LOGW(TAG, "Cannot parse remote version '%s', proceeding with download", rd.version);
+        OTA_LOGW("Cannot parse remote version '%s', proceeding with download", rd.version);
         return VERSION_CHECK_SKIP;
     }
 
     char rem_str[32];
     fw_ver_to_string(&rem_ver, rem_str, sizeof(rem_str));
-    ESP_LOGI(TAG, "Remote version parsed: %s (%u segments)", rem_str, rem_ver.nsegs);
+    OTA_LOGI("Remote version parsed: %s (%u segments)", rem_str, rem_ver.nsegs);
 
     int cmp = fw_ver_compare(&rem_ver, &cur_ver);
     if (cmp > 0) {
-        ESP_LOGI(TAG, "Remote version %s > current %s, update needed", rem_str, cur_str);
+        OTA_LOGI("Remote version %s > current %s, update needed", rem_str, cur_str);
         return VERSION_CHECK_PROCEED;
     } else if (cmp == 0) {
-        ESP_LOGI(TAG, "Remote version %s == current %s, already up to date", rem_str, cur_str);
+        OTA_LOGI("Remote version %s == current %s, already up to date", rem_str, cur_str);
         return VERSION_CHECK_UP_TO_DATE;
     } else {
-        ESP_LOGW(TAG, "Remote version %s < current %s, downgrade rejected", rem_str, cur_str);
+        OTA_LOGW("Remote version %s < current %s, downgrade rejected", rem_str, cur_str);
         return VERSION_CHECK_DOWNGRADE;
     }
 }
@@ -305,7 +374,7 @@ static void url_task(void *arg)
     uint8_t gen = (uint8_t)(uintptr_t)arg;
     s_url_task = xTaskGetCurrentTaskHandle();
 
-    ESP_LOGI(TAG, "URL OTA task started: %s, gen=%u", s_ota_url, gen);
+    OTA_LOGI("URL OTA task started: %s, gen=%u", s_ota_url, gen);
 
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_CHECKING, BLE_OTA_ERR_NONE);
 
@@ -318,22 +387,22 @@ static void url_task(void *arg)
 
     if (check_res == VERSION_CHECK_DOWNGRADE) {
 #ifdef CONFIG_BLE_SRV_OTA_URL_ALLOW_DOWNGRADE
-        ESP_LOGW(TAG, "Remote firmware is older than current, downgrade allowed");
+        OTA_LOGW("Remote firmware is older than current, downgrade allowed");
 #else
-        ESP_LOGW(TAG, "Remote firmware is older than current, rejecting downgrade");
+        OTA_LOGW("Remote firmware is older than current, rejecting downgrade");
         url_task_finish(gen, BLE_OTA_STATE_CHECK_FAIL, BLE_OTA_ERR_VERSION_DOWNGRADE);
         return;
 #endif
     }
 
     if (check_res == VERSION_CHECK_UP_TO_DATE) {
-        ESP_LOGI(TAG, "Firmware is already up to date, no update needed");
+        OTA_LOGI("Firmware is already up to date, no update needed");
         url_task_finish(gen, BLE_OTA_STATE_CHECK_FAIL, BLE_OTA_ERR_VERSION_SAME);
         return;
     }
 
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_CHECK_OK, BLE_OTA_ERR_NONE);
-    ESP_LOGI(TAG, "Downloading: %s", s_ota_url);
+    OTA_LOGI("Downloading: %s", s_ota_url);
 
     esp_http_client_config_t http_cfg = {
         .url = s_ota_url,
@@ -352,7 +421,21 @@ static void url_task(void *arg)
     esp_https_ota_handle_t h = NULL;
     esp_err_t ret = esp_https_ota_begin(&ota_cfg, &h);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "https_ota_begin failed: %s", esp_err_to_name(ret));
+        OTA_LOGE("OTA begin failed: %s (0x%x)", esp_err_to_name(ret), ret);
+        switch (ret) {
+        case ESP_ERR_INVALID_ARG:
+            OTA_LOGE("  Reason: invalid HTTP config or handle");
+            break;
+        case ESP_ERR_NO_MEM:
+            OTA_LOGE("  Reason: out of memory for OTA buffer/partition");
+            break;
+        case ESP_ERR_OTA_BASE:
+        case ESP_FAIL:
+        default:
+            OTA_LOGE("  Reason: HTTP connection failed or unable to open OTA partition");
+            OTA_LOGE("  Check: URL is correct, server is reachable, WiFi is stable");
+            break;
+        }
         url_task_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return;
     }
@@ -371,9 +454,9 @@ static void url_task(void *arg)
     while (1) {
         if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) {
             if (!ble_srv_ota_gen_valid(gen)) {
-                ESP_LOGW(TAG, "URL OTA gen invalid, aborting");
+                OTA_LOGW("URL OTA gen invalid, aborting");
             } else {
-                ESP_LOGW(TAG, "URL OTA abort requested");
+                OTA_LOGW("URL OTA abort requested");
             }
             esp_https_ota_abort(h);
             aborted = true;
@@ -383,7 +466,7 @@ static void url_task(void *arg)
         ret = esp_https_ota_perform(h);
 
         if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) {
-            ESP_LOGW(TAG, "URL OTA abort after perform");
+            OTA_LOGW("URL OTA abort after perform");
             esp_https_ota_abort(h);
             aborted = true;
             break;
@@ -400,12 +483,20 @@ static void url_task(void *arg)
                     last_pct = pct;
                     ble_srv_ota_push_status(gen);
                     if (pct % 10 == 0) {
-                        ESP_LOGI(TAG, "URL OTA: %d%% (%d/%d)", pct, total_bytes, size);
+                        OTA_LOGI("Download progress: %d%% (%d / %d bytes)", pct, total_bytes, size);
                     }
+                }
+            } else {
+                if (total_bytes > 0 && total_bytes % (HTTP_BUFFER_SIZE * 4) < HTTP_BUFFER_SIZE) {
+                    OTA_LOGI("Downloaded %d bytes (content-length unknown)", total_bytes);
                 }
             }
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LOOP_TICK_MS));
         } else {
+            int downloaded = esp_https_ota_get_image_len_read(h);
+            int total_size = esp_https_ota_get_image_size(h);
+            OTA_LOGW("Download loop ended: ret=%s, downloaded=%d, total=%d",
+                     esp_err_to_name(ret), downloaded, total_size);
             break;
         }
     }
@@ -416,23 +507,104 @@ static void url_task(void *arg)
     }
 
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Download complete, verifying...");
+        int total_bytes = esp_https_ota_get_image_len_read(h);
+        OTA_LOGI("Download complete: %d bytes received, verifying firmware...", total_bytes);
         ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFYING, BLE_OTA_ERR_NONE);
 
         ret = esp_https_ota_finish(h);
         if (ret == ESP_OK) {
             ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFY_OK, BLE_OTA_ERR_NONE);
             ble_srv_ota_set_state(gen, BLE_OTA_STATE_APPLYING, BLE_OTA_ERR_NONE);
-            ESP_LOGI(TAG, "Verify and apply OK");
+            OTA_LOGI("Firmware verification and application successful!");
+            OTA_LOGI("  New firmware will boot after restart");
             url_task_finish(gen, BLE_OTA_STATE_APPLY_OK, BLE_OTA_ERR_NONE);
             return;
         } else {
-            ESP_LOGE(TAG, "Finish failed: %s", esp_err_to_name(ret));
+            OTA_LOGE("Firmware verification failed: %s (0x%x)", esp_err_to_name(ret), ret);
+            switch (ret) {
+            case ESP_ERR_OTA_VALIDATE_FAILED:
+                OTA_LOGE("  Reason: firmware image validation failed");
+                OTA_LOGE("  - Bad magic byte, invalid image header");
+                OTA_LOGE("  - Checksum or SHA-256 hash mismatch");
+                OTA_LOGE("  - Secure boot signature verification failed (if enabled)");
+                OTA_LOGE("  - The downloaded file is truncated, corrupt, or not a valid ESP32 firmware");
+                OTA_LOGE("  - Ensure the firmware is built for this chip target (ESP32-S3)");
+                break;
+            case ESP_ERR_OTA_PARTITION_CONFLICT:
+                OTA_LOGE("  Reason: cannot write to currently running partition");
+                break;
+            case ESP_ERR_OTA_SELECT_INFO_INVALID:
+                OTA_LOGE("  Reason: OTA data partition contains invalid content");
+                OTA_LOGE("  - Partition table may be misconfigured");
+                break;
+            case ESP_ERR_OTA_SMALL_SEC_VER:
+                OTA_LOGE("  Reason: new firmware has smaller secure version than current");
+                OTA_LOGE("  - Anti-rollback protection prevents downgrade");
+                break;
+            case ESP_ERR_OTA_ROLLBACK_FAILED:
+                OTA_LOGE("  Reason: rollback failed - no valid firmware in passive partition");
+                break;
+            case ESP_ERR_OTA_ROLLBACK_INVALID_STATE:
+                OTA_LOGE("  Reason: current firmware is in PENDING_VERIFY state");
+                OTA_LOGE("  - Current firmware has not been confirmed valid yet");
+                OTA_LOGE("  - Call esp_ota_mark_app_valid_cancel_rollback() first");
+                break;
+            case ESP_ERR_INVALID_STATE:
+                OTA_LOGE("  Reason: OTA handle in invalid state");
+                break;
+            case ESP_ERR_FLASH_BASE:
+                OTA_LOGE("  Reason: flash write failed (hardware/partition issue)");
+                break;
+            default:
+                OTA_LOGE("  Reason: unknown error (0x%x)", ret);
+                break;
+            }
             url_task_finish(gen, BLE_OTA_STATE_VERIFY_FAIL, BLE_OTA_ERR_VERIFY_FAILED);
             return;
         }
     } else {
-        ESP_LOGE(TAG, "Download failed: %s", esp_err_to_name(ret));
+        int downloaded = esp_https_ota_get_image_len_read(h);
+        OTA_LOGE("Download failed: %s (0x%x), downloaded=%d bytes",
+                 esp_err_to_name(ret), ret, downloaded);
+        switch (ret) {
+        case ESP_ERR_HTTP_CONNECT:
+        case ESP_ERR_HTTP_CONNECTING:
+            OTA_LOGE("  Reason: cannot connect to server");
+            OTA_LOGE("  Check: WiFi signal strength, DNS resolution, server is up");
+            break;
+        case ESP_ERR_HTTP_READ_TIMEOUT:
+            OTA_LOGE("  Reason: HTTP read timed out");
+            OTA_LOGE("  Check: network stability, server responsiveness");
+            break;
+        case ESP_ERR_HTTP_INVALID_TRANSPORT:
+        case ESP_ERR_HTTP_FETCH_HEADER:
+            OTA_LOGE("  Reason: HTTP transport error or failed to fetch response headers");
+            break;
+        case ESP_ERR_HTTP_MAX_REDIRECT:
+            OTA_LOGE("  Reason: too many HTTP redirects");
+            OTA_LOGE("  URL: %s", s_ota_url);
+            break;
+        case ESP_ERR_HTTP_RANGE_NOT_SATISFIABLE:
+            OTA_LOGE("  Reason: HTTP 416 Range Not Satisfiable");
+            break;
+        case ESP_ERR_HTTP_CONNECTION_CLOSED:
+            OTA_LOGE("  Reason: server closed the connection prematurely");
+            OTA_LOGE("  The firmware download was interrupted");
+            break;
+        case ESP_ERR_HTTP_INCOMPLETE_DATA:
+            OTA_LOGE("  Reason: incomplete data received (less than Content-Length)");
+            OTA_LOGE("  The firmware file may be truncated or network was interrupted");
+            break;
+        case ESP_ERR_HTTP_WRITE_DATA:
+            OTA_LOGE("  Reason: failed to write HTTP data (OTA partition write error)");
+            break;
+        case ESP_ERR_NO_MEM:
+            OTA_LOGE("  Reason: out of memory during download");
+            break;
+        default:
+            OTA_LOGE("  Reason: network or protocol error (err=0x%x)", ret);
+            break;
+        }
         esp_https_ota_abort(h);
         url_task_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return;
@@ -442,7 +614,7 @@ static void url_task(void *arg)
 bool ble_srv_ota_url_init(void)
 {
     if (s_initialized) {
-        ESP_LOGW(TAG, "URL OTA already initialized");
+        OTA_LOGW("URL OTA already initialized");
         return true;
     }
     s_url_task = NULL;
@@ -467,7 +639,7 @@ void ble_srv_ota_url_deinit(void)
             vTaskDelay(pdMS_TO_TICKS(URL_DEINIT_POLL_MS));
             wait++;
         }
-        ESP_LOGW(TAG, "URL OTA task did not exit in time, force deleting");
+        OTA_LOGW("URL OTA task did not exit in time, force deleting");
         vTaskDelete(task);
     }
     s_initialized = false;
@@ -476,23 +648,23 @@ void ble_srv_ota_url_deinit(void)
 bool ble_srv_ota_url_start(const char *url)
 {
     if (!url || strlen(url) == 0) {
-        ESP_LOGE(TAG, "Invalid URL");
+        OTA_LOGE("Invalid URL");
         return false;
     }
 
     if (!ble_srv_wifi_is_connected()) {
-        ESP_LOGE(TAG, "WiFi not connected, cannot start URL OTA");
+        OTA_LOGE("WiFi not connected, cannot start URL OTA");
         return false;
     }
 
     if (s_url_task) {
-        ESP_LOGW(TAG, "URL OTA task already running");
+        OTA_LOGW("URL OTA task already running");
         return false;
     }
 
     uint8_t gen = ble_srv_ota_begin(BLE_OTA_MODE_URL);
     if (gen == BLE_OTA_INVALID_GEN) {
-        ESP_LOGE(TAG, "Cannot begin URL OTA, session busy");
+        OTA_LOGE("Cannot begin URL OTA, session busy");
         return false;
     }
 
@@ -504,14 +676,14 @@ bool ble_srv_ota_url_start(const char *url)
                                  (void *)(uintptr_t)gen,
                                  OTA_URL_TASK_PRIO, &task_handle);
     if (ok != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create URL OTA task");
+        OTA_LOGE("Failed to create URL OTA task");
         s_url_task = NULL;
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return false;
     }
     s_url_task = task_handle;
 
-    ESP_LOGI(TAG, "URL OTA started: %s, gen=%u", url, gen);
+    OTA_LOGI("URL OTA started: %s, gen=%u", url, gen);
     return true;
 }
 

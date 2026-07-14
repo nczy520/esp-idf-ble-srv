@@ -313,7 +313,6 @@ static void ble_srv_led_stop_effect(uint32_t wait_ms)
             vTaskDelay(pdMS_TO_TICKS(10));
             waited += 10;
         }
-        vTaskDelete(task);
     }
 }
 

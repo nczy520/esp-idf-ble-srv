@@ -15,6 +15,7 @@ class LeftPanelComponent(BaseComponent):
         self.scan_btn = None
         self.scan_loading = None
         self.filter_field = None
+        self.pin_field = None
         self.scan_timeout_btn = None
         self.scan_timeout_value = "5"
 
@@ -50,6 +51,17 @@ class LeftPanelComponent(BaseComponent):
             label="设备名过滤",
             value="BLE-SRV",
             prefix_icon=ft.Icons.FILTER_LIST,
+            **input_style,
+        )
+
+        self.pin_field = ft.TextField(
+            label="PIN",
+            prefix_icon=ft.Icons.LOCK_OUTLINE,
+            password=True,
+            value="112233",
+            input_filter=ft.NumbersOnlyInputFilter(),
+            max_length=8,
+            counter_style=ft.TextStyle(size=0),
             **input_style,
         )
 
@@ -108,7 +120,10 @@ class LeftPanelComponent(BaseComponent):
                     ft.Text("设备列表", size=15, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                 ], spacing=6),
                 ft.Container(height=10),
-                self.filter_field,
+                ft.Row([
+                    ft.Container(content=self.filter_field, expand=True),
+                    ft.Container(content=self.pin_field, width=120),
+                ], spacing=8),
                 ft.Container(height=10),
                 ft.Stack([
                     ft.Container(

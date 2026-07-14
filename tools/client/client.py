@@ -24,6 +24,8 @@ from .constants import (
     BLE_DM_FLASH_CHAR_UUID,
     BLE_DM_PARTITION_CHAR_UUID,
     BLE_DM_RESTART_CHAR_UUID,
+    BLE_DM_AUTH_CHAR_UUID,
+    BLE_DM_LOG_CHAR_UUID,
     BLE_DM_CMD_RESTART,
     BLE_LED_CTRL_CHAR_UUID,
     BLE_LED_COLOR_CHAR_UUID,
@@ -89,9 +91,10 @@ STATE_NAMES = {
 
 
 class BLEDeviceClient:
-    def __init__(self, device_name=None, address=None):
+    def __init__(self, device_name=None, address=None, pin=None):
         self.device_name = device_name
         self.address = address
+        self.pin = pin
         self.client = None
         self.is_connected = False
         self.ota_status = None
@@ -102,6 +105,15 @@ class BLEDeviceClient:
         self._last_ota_state = None
         self._connect_gen = 0
         self._disconnect_event = None
+        self._log_notify_started = False
+
+    def _on_log_notify(self, sender, data):
+        try:
+            msg = bytes(data).decode('utf-8', errors='replace')
+        except Exception:
+            msg = repr(data)
+        if msg:
+            print(f"  [设备日志] {msg}".ljust(120), flush=True)
 
     def _ota_status_handler(self, sender, data):
         try:
@@ -230,6 +242,12 @@ class BLEDeviceClient:
             self.is_connected = True
             mtu = self.client.mtu_size if hasattr(self.client, 'mtu_size') else 247
             print(f"连接成功 (MTU={mtu})")
+            if self.pin:
+                if not await self.authenticate(self.pin):
+                    print("PIN认证失败，断开连接")
+                    await self.disconnect()
+                    return False
+            await self._subscribe_log_notify()
             return True
         except BleakError as e:
             print(f"连接失败: {e}")
@@ -238,9 +256,29 @@ class BLEDeviceClient:
                 self.client = None
             return False
 
+    async def authenticate(self, pin):
+        """通过写入PIN码进行GATT层认证"""
+        if not self.client or not self.client.is_connected:
+            print("未连接设备")
+            return False
+        try:
+            pin_bytes = pin.encode('utf-8')[:16]
+            await self.client.write_gatt_char(BLE_DM_AUTH_CHAR_UUID, pin_bytes, response=True)
+            data = await self.client.read_gatt_char(BLE_DM_AUTH_CHAR_UUID)
+            if data and data[0] == 1:
+                print("PIN认证成功")
+                return True
+            else:
+                print("PIN认证失败: 设备返回未认证状态")
+                return False
+        except Exception as e:
+            print(f"PIN认证失败: {e}")
+            return False
+
     def _on_disconnect(self, client):
         self.is_connected = False
         self._ota_notify_started = False
+        self._log_notify_started = False
         self._ota_active = False
         if self._ota_ack_event:
             self._ota_ack_event.set()
@@ -248,7 +286,30 @@ class BLEDeviceClient:
             self._disconnect_event.set()
         print("\n设备已断开连接")
 
+    async def _subscribe_log_notify(self):
+        if not self.client or not self.client.is_connected:
+            return False
+        if self._log_notify_started:
+            return True
+        try:
+            await self.client.start_notify(BLE_DM_LOG_CHAR_UUID, self._on_log_notify)
+            self._log_notify_started = True
+            print("设备日志订阅已开启")
+            return True
+        except Exception as e:
+            print(f"订阅设备日志失败: {e}")
+            return False
+
+    async def _unsubscribe_log_notify(self):
+        if self._log_notify_started and self.client and self.client.is_connected:
+            try:
+                await self.client.stop_notify(BLE_DM_LOG_CHAR_UUID)
+            except Exception:
+                pass
+        self._log_notify_started = False
+
     async def disconnect(self):
+        await self._unsubscribe_log_notify()
         if self._ota_notify_started and self.client:
             try:
                 await self.client.stop_notify(BLE_OTA_STATUS_CHAR_UUID)

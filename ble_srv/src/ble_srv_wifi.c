@@ -83,30 +83,6 @@ static bool save_pass_obfuscated(nvs_handle_t handle, const char *password)
     return true;
 }
 
-static bool load_pass_deobfuscated(nvs_handle_t handle, char *password, size_t max_len)
-{
-    uint8_t obf_buf[BLE_WIFI_PASS_MAX_LEN];
-    size_t required_size = BLE_WIFI_PASS_MAX_LEN;
-
-    esp_err_t err = nvs_get_blob(handle, BLE_WIFI_NVS_KEY_PASS, obf_buf, &required_size);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read obfuscated password: %s", esp_err_to_name(err));
-        return false;
-    }
-
-    uint16_t pass_len = 0;
-    err = nvs_get_u16(handle, BLE_WIFI_NVS_KEY_PASS_LEN, &pass_len);
-    if (err != ESP_OK || pass_len >= max_len || pass_len >= BLE_WIFI_PASS_MAX_LEN) {
-        ESP_LOGE(TAG, "Failed to read password length or invalid: %s", esp_err_to_name(err));
-        return false;
-    }
-
-    obf_xor((uint8_t *)password, obf_buf, pass_len);
-    password[pass_len] = '\0';
-
-    return true;
-}
-
 static bool save_to_prov_nvs(const char *ssid, const char *password)
 {
     nvs_handle_t handle;

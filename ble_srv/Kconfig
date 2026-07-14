@@ -144,6 +144,26 @@ menu "BLE Service"
                 Fifth NTP server
     endmenu
 
+    menu "Authentication"
+        config BLE_SRV_AUTH_ENABLED
+            bool "Enable PIN Authentication"
+            default n
+            help
+                Enable application-layer PIN authentication for BLE connections.
+                When enabled, clients must write the correct PIN to the authentication
+                characteristic before accessing other GATT characteristics.
+                BLE connection is still open, but GATT operations require PIN verification.
+
+        config BLE_SRV_AUTH_PIN
+            string "Default PIN Code"
+            default "123456"
+            depends on BLE_SRV_AUTH_ENABLED
+            help
+                Default PIN code for BLE GATT authentication.
+                PIN length must be between 1 and 16 characters.
+                This can be changed at runtime via the authentication characteristic.
+    endmenu
+
     menu "LED"
         config BLE_SRV_LED_ENABLED
             bool "Enable WS2812 LED Control"

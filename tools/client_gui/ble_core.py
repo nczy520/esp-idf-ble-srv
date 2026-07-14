@@ -41,6 +41,8 @@ from client.constants import (
     BLE_DM_FLASH_CHAR_UUID,
     BLE_DM_PARTITION_CHAR_UUID,
     BLE_DM_RESTART_CHAR_UUID,
+    BLE_DM_AUTH_CHAR_UUID,
+    BLE_DM_LOG_CHAR_UUID,
     BLE_DM_CMD_RESTART,
     BLE_LED_CTRL_CHAR_UUID,
     BLE_LED_COLOR_CHAR_UUID,
@@ -139,6 +141,8 @@ class BleCore:
         self._ota_consecutive_timeouts = 0
         self._connect_gen = 0
         self._disconnect_event = None
+        self._log_notify_started = False
+        self._log_notify_gen = 0
 
         self._ui_queue = queue.Queue()
         self._ui_flush_lock = threading.Lock()
@@ -344,6 +348,8 @@ class BleCore:
         self.connected_time = None
         self._ota_notify_started = False
         self._notify_gen += 1
+        self._log_notify_started = False
+        self._log_notify_gen += 1
         self._reset_ota_state()
         if not self._restart_in_progress:
             self._log("设备已断开连接", "warn")
@@ -420,7 +426,7 @@ class BleCore:
         self._log(f"扫描完成，发现 {len(devices)} 个设备", "info")
         return devices
 
-    async def connect_device(self, device_info):
+    async def connect_device(self, device_info, pin=None):
         address = device_info.get("raw_address", device_info.get("address")) if isinstance(device_info, dict) else getattr(device_info, "address", None)
         name = device_info.get("name", "Unknown") if isinstance(device_info, dict) else getattr(device_info, "name", "Unknown")
 
@@ -448,6 +454,17 @@ class BleCore:
             self.connected_time = time.time()
             mtu = self.ble_client.mtu_size if hasattr(self.ble_client, "mtu_size") else 247
             self._log(f"连接成功: {name} (MTU={mtu})", "success")
+            if pin:
+                if not await self._authenticate(pin):
+                    self._log("PIN认证失败，断开连接", "error")
+                    try:
+                        await self.ble_client.disconnect()
+                    except Exception:
+                        pass
+                    self._is_connected = False
+                    self.ble_client = None
+                    return False, "PIN认证失败"
+            await self._subscribe_log_notify()
             return True, mtu
         except BleakError as e:
             self._log(f"连接失败: {e}", "error")
@@ -462,8 +479,75 @@ class BleCore:
                 self.ble_client = None
             return False, str(e)
 
+    async def _authenticate(self, pin):
+        """通过写入PIN码进行GATT层认证"""
+        if not self.ble_client or not self.ble_client.is_connected:
+            return False
+        try:
+            self._log("正在PIN认证...", "tx")
+            pin_bytes = pin.encode('utf-8')[:16]
+            await self.ble_client.write_gatt_char(BLE_DM_AUTH_CHAR_UUID, pin_bytes, response=True)
+            data = await self.ble_client.read_gatt_char(BLE_DM_AUTH_CHAR_UUID)
+            if data and data[0] == 1:
+                self._log("PIN认证成功", "success")
+                return True
+            else:
+                self._log("PIN认证失败: 设备返回未认证状态", "error")
+                return False
+        except Exception as e:
+            self._log(f"PIN认证失败: {e}", "error")
+            return False
+
+    def _on_log_notify(self, sender, data: bytearray):
+        """处理LOG特征值通知"""
+        try:
+            msg = bytes(data).decode('utf-8', errors='replace')
+        except Exception:
+            msg = repr(data)
+        if not msg:
+            return
+        level = "info"
+        if msg.startswith("[E]"):
+            level = "error"
+        elif msg.startswith("[W]"):
+            level = "warn"
+        elif msg.startswith("[D]"):
+            level = "debug"
+        elif msg.startswith("[I]"):
+            level = "info"
+        self._log(msg, level)
+
+    async def _unsubscribe_log_notify(self):
+        """取消LOG特征值通知订阅"""
+        notify_gen = self._log_notify_gen
+        client = self.ble_client
+        if self._log_notify_started and client and self._is_connected:
+            try:
+                await client.stop_notify(BLE_DM_LOG_CHAR_UUID)
+            except Exception:
+                pass
+        if self._log_notify_gen == notify_gen:
+            self._log_notify_started = False
+
+    async def _subscribe_log_notify(self):
+        """订阅LOG特征值通知（接收设备端日志）"""
+        if not self.ble_client or not self.ble_client.is_connected:
+            return False
+        if self._log_notify_started:
+            return True
+        try:
+            self._log_notify_gen += 1
+            await self.ble_client.start_notify(BLE_DM_LOG_CHAR_UUID, self._on_log_notify)
+            self._log_notify_started = True
+            self._log("设备日志订阅已开启", "info")
+            return True
+        except Exception as e:
+            self._log(f"订阅设备日志失败: {e}", "warn")
+            return False
+
     async def disconnect_device(self):
         await self._stop_ota_notify()
+        await self._unsubscribe_log_notify()
         self._reset_ota_state()
         old_client = self.ble_client
         disc_event = self._disconnect_event

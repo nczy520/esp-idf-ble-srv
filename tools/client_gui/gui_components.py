@@ -36,10 +36,12 @@ class GuiComponents:
         left_panel_comp = LeftPanelComponent(self.app)
         left_panel = left_panel_comp.build()
         self.filter_field = left_panel_comp.filter_field
+        self.pin_field = left_panel_comp.pin_field
         self.device_list = left_panel_comp.device_list
         self.scan_loading = left_panel_comp.scan_loading
         self.scan_btn = left_panel_comp.scan_btn
         self.scan_timeout_dropdown = left_panel_comp
+        self.scan_timeout_btn = left_panel_comp.scan_timeout_btn
 
         # 构建Tab组件
         info_tab_comp = InfoTabComponent(self.app)

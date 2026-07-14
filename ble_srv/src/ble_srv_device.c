@@ -202,9 +202,7 @@ bool ble_srv_get_flash_info(ble_srv_flash_info_t *info)
             info->partition_count++;
             used += part->size;
         }
-        esp_partition_iterator_t next_it = esp_partition_next(it);
-        esp_partition_iterator_release(it);
-        it = next_it;
+        it = esp_partition_next(it);
     }
 
     if (flash_size > used) {
@@ -255,9 +253,6 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
     }
 
     if (!found) {
-        if (it) {
-            esp_partition_iterator_release(it);
-        }
         ESP_LOGW(TAG, "Partition index %d not found", index);
         return false;
     }
@@ -267,8 +262,6 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
     info->size = found->size;
     info->type = found->type;
     info->subtype = found->subtype;
-
-    esp_partition_iterator_release(it);
 
     ESP_LOGI(TAG, "Partition[%d]: %s @0x%lx size=%lu type=%d subtype=%d",
              index, info->label, (unsigned long)info->address,

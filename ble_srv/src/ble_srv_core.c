@@ -19,6 +19,7 @@
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
+#include "host/ble_store.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
@@ -127,6 +128,8 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
             s_conn_handle = event->connect.conn_handle;
             s_advertising = false;
             STATE_UNLOCK();
+            ble_srv_gatt_clear_auth_state(event->connect.conn_handle);
+            ble_srv_gatt_set_log_conn_handle(event->connect.conn_handle);
         } else {
             STATE_UNLOCK();
             ble_srv_start_advertising();
@@ -139,6 +142,9 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_advertising = false;
         STATE_UNLOCK();
+        ble_srv_gatt_clear_auth_state(event->disconnect.conn.conn_handle);
+        ble_srv_gatt_set_log_conn_handle(BLE_HS_CONN_HANDLE_NONE);
+        ble_srv_gatt_set_log_notify_enabled(false);
         ble_srv_gatt_set_ota_status_notify_enabled(false);
         ble_srv_gatt_set_wifi_status_notify_enabled(false);
         ble_srv_ota_abort(BLE_OTA_ERR_DISCONNECTED);
@@ -166,6 +172,15 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
             ble_srv_gatt_set_wifi_status_notify_enabled(event->subscribe.cur_notify);
         }
 #endif
+        else if (event->subscribe.attr_handle == ble_srv_gatt_get_log_chr_val_handle()) {
+            ble_srv_gatt_set_log_notify_enabled(event->subscribe.cur_notify);
+            if (event->subscribe.cur_notify) {
+                ble_srv_gatt_set_log_conn_handle(event->subscribe.conn_handle);
+            }
+            ESP_LOGI(TAG, "LOG notify %s (conn=%d)",
+                     event->subscribe.cur_notify ? "enabled" : "disabled",
+                     event->subscribe.conn_handle);
+        }
         break;
 
     case BLE_GAP_EVENT_MTU:
@@ -258,6 +273,9 @@ bool ble_srv_init(void)
     ble_hs_cfg.reset_cb = ble_srv_on_reset;
     ble_hs_cfg.sync_cb = ble_srv_on_sync;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+
+    ble_store_clear();
+    ESP_LOGI(TAG, "BLE bond store cleared");
 
     ble_svc_gap_init();
     ble_svc_gatt_init();

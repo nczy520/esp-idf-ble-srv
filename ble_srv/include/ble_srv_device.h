@@ -15,6 +15,12 @@ extern "C" {
 #define BLE_SRV_FLASH_CHAR_UUID       0xFFE5
 #define BLE_SRV_PARTITION_CHAR_UUID   0xFFE7
 #define BLE_SRV_RESTART_CHAR_UUID     0xFFE6
+#define BLE_SRV_AUTH_CHAR_UUID        0xFFE8
+#define BLE_SRV_LOG_CHAR_UUID         0xFFE9
+
+#define BLE_SRV_AUTH_PIN_MAX_LEN      16
+#define BLE_SRV_AUTH_ERR_NOT_AUTH     0x80
+#define BLE_SRV_LOG_MAX_LEN           200
 
 typedef enum {
     BLE_SRV_CMD_GET_INFO = 0x01,

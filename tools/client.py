@@ -111,6 +111,7 @@ async def main():
     )
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('-d', '--device', help='设备名称（前缀匹配），不指定则扫描选择')
+    parser.add_argument('--pin', help='设备连接密码（GATT层PIN认证），设备开启认证时需要')
 
     cmd_choices = [
         'scan', 'info', 'memory', 'cpu', 'flash', 'partition', 'restart',
@@ -137,7 +138,7 @@ async def main():
 
     args = parser.parse_args()
 
-    client = BLEDeviceClient(device_name=args.device)
+    client = BLEDeviceClient(device_name=args.device, pin=args.pin)
     connected = False
 
     if args.command == 'wifi-connect' and not args.ssid:
