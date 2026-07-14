@@ -142,6 +142,10 @@ class BaseHandler:
                 self.ui.ota_tab.ota_default_btn,
                 self.ui.ota_tab.ota_abort_btn,
             ])
+        if hasattr(self.ui, 'custom_cmd_tab') and self.ui.custom_cmd_tab:
+            buttons.extend([
+                self.ui.custom_cmd_tab.send_btn,
+            ])
         return buttons
 
     def _get_excluded_buttons(self):

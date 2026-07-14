@@ -45,6 +45,15 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
     __attribute__((format(printf, 3, 4)));
 void ble_srv_gatt_log_send_raw(ble_srv_log_level_t level, const char *msg);
 
+typedef int (*ble_srv_custom_cmd_cb_t)(uint16_t conn_handle, const uint8_t *data, uint16_t data_len,
+                                        uint8_t *resp_buf, uint16_t resp_buf_size, uint16_t *out_resp_len);
+
+uint16_t ble_srv_gatt_get_custom_cmd_chr_val_handle(void);
+bool ble_srv_gatt_custom_cmd_notify_enabled(void);
+void ble_srv_gatt_set_custom_cmd_notify_enabled(bool enabled);
+void ble_srv_gatt_set_custom_cmd_callback(ble_srv_custom_cmd_cb_t cb);
+bool ble_srv_gatt_custom_cmd_notify(uint16_t conn_handle, const uint8_t *data, uint16_t data_len);
+
 #ifdef __cplusplus
 }
 #endif

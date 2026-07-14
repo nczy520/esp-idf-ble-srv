@@ -11,6 +11,7 @@ from client_gui.handlers.device_info import DeviceInfoHandler
 from client_gui.handlers.led_control import LEDControlHandler
 from client_gui.handlers.wifi_control import WiFiControlHandler
 from client_gui.handlers.ota_control import OTAControlHandler
+from client_gui.handlers.custom_cmd_control import CustomCmdHandler
 
 
 class GuiHandlers:
@@ -27,6 +28,7 @@ class GuiHandlers:
         self.led_control = LEDControlHandler(app)
         self.wifi_control = WiFiControlHandler(app)
         self.ota_control = OTAControlHandler(app)
+        self.custom_cmd = CustomCmdHandler(app)
 
     def set_ui(self, ui):
         self.ui = ui
@@ -37,6 +39,7 @@ class GuiHandlers:
         self.led_control.set_ui(ui)
         self.wifi_control.set_ui(ui)
         self.ota_control.set_ui(ui)
+        self.custom_cmd.set_ui(ui)
 
     # === 日志功能（委托给BaseHandler）===
     def log(self, msg, level="info"):
@@ -130,3 +133,16 @@ class GuiHandlers:
 
     def abort_ota(self, event=None):
         self.ota_control.abort_ota(event)
+
+    # === 自定义命令（委托给CustomCmdHandler）===
+    def send_custom_cmd(self, event=None):
+        self.custom_cmd.send_custom_cmd(event)
+
+    def clear_custom_cmd_log(self, event=None):
+        self.custom_cmd.clear_custom_cmd_log(event)
+
+    def on_custom_cmd_format_change(self, event=None):
+        self.custom_cmd.on_custom_cmd_format_change(event)
+
+    def on_auto_send_toggle(self, event=None):
+        self.custom_cmd.on_auto_send_toggle(event)

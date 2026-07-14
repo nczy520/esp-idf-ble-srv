@@ -151,6 +151,8 @@ class ConnectionHandler(BaseHandler):
         self.ui.led_overlay.visible = visible
         self.ui.wifi_overlay.visible = visible
         self.ui.ota_overlay.visible = visible
+        if hasattr(self.ui, 'custom_cmd_overlay') and self.ui.custom_cmd_overlay:
+            self.ui.custom_cmd_overlay.visible = visible
 
     def _add_device_to_list(self, device, index):
         """添加设备到列表"""
@@ -312,6 +314,8 @@ class ConnectionHandler(BaseHandler):
                 self.log(f"连接成功 (MTU={mtu_or_err})", "success")
                 self.ble_log(f"连接成功 MTU={mtu_or_err}", "success")
                 self.update_connection_ui(True)
+                if hasattr(self.app.handlers, 'custom_cmd'):
+                    self.app.handlers.custom_cmd._update_custom_cmd_ui_on_connect()
             else:
                 self.log(f"连接失败: {mtu_or_err}", "error")
                 self.ble_log(f"连接失败: {mtu_or_err}", "error")
@@ -334,5 +338,7 @@ class ConnectionHandler(BaseHandler):
             self.update_connection_ui(False)
             self.log("已断开连接", "info")
             self.ble_log("已断开", "info")
+            if hasattr(self.app.handlers, 'custom_cmd'):
+                self.app.handlers.custom_cmd._reset_custom_cmd_ui_on_disconnect()
 
         self._run_with_loading(btn, self.ble.disconnect_device(), callback, loading_text="断开中...", timeout=5)

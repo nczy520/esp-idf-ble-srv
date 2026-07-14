@@ -17,6 +17,7 @@ extern "C" {
 #define BLE_SRV_RESTART_CHAR_UUID     0xFFE6
 #define BLE_SRV_AUTH_CHAR_UUID        0xFFE8
 #define BLE_SRV_LOG_CHAR_UUID         0xFFE9
+#define BLE_SRV_CUSTOM_CMD_CHAR_UUID  0xFFEA
 
 #define BLE_SRV_AUTH_PIN_MAX_LEN      16
 #define BLE_SRV_AUTH_ERR_NOT_AUTH     0x80

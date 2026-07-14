@@ -66,6 +66,10 @@ static volatile bool s_conn_authenticated = false;
 static uint16_t s_srv_log_chr_val_handle = 0;
 static bool s_log_notify_enabled = false;
 
+static uint16_t s_srv_custom_cmd_chr_val_handle = 0;
+static bool s_custom_cmd_notify_enabled = false;
+static ble_srv_custom_cmd_cb_t s_custom_cmd_cb = NULL;
+
 static const ble_uuid16_t s_srv_svc_uuid          = BLE_UUID16_INIT(BLE_SRV_SVC_UUID);
 static const ble_uuid16_t s_srv_cmd_chr_uuid      = BLE_UUID16_INIT(BLE_SRV_CMD_CHAR_UUID);
 static const ble_uuid16_t s_srv_info_chr_uuid     = BLE_UUID16_INIT(BLE_SRV_INFO_CHAR_UUID);
@@ -80,6 +84,7 @@ static const ble_uuid16_t s_srv_auth_chr_uuid      = BLE_UUID16_INIT(BLE_SRV_AUT
 #endif
 
 static const ble_uuid16_t s_srv_log_chr_uuid       = BLE_UUID16_INIT(BLE_SRV_LOG_CHAR_UUID);
+static const ble_uuid16_t s_srv_custom_cmd_chr_uuid = BLE_UUID16_INIT(BLE_SRV_CUSTOM_CMD_CHAR_UUID);
 
 static const ble_uuid16_t s_ota_svc_uuid          = BLE_UUID16_INIT(BLE_OTA_SVC_UUID);
 static const ble_uuid16_t s_ota_bt_cmd_chr_uuid   = BLE_UUID16_INIT(BLE_OTA_BT_CMD_CHAR_UUID);
@@ -162,6 +167,12 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_srv_log_chr_val_handle,
+            },
+            {
+                .uuid = &s_srv_custom_cmd_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_srv_custom_cmd_chr_val_handle,
             },
             { 0 },
         },
@@ -533,6 +544,20 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
         }
     }
 #endif
+    else if (attr_handle == s_srv_custom_cmd_chr_val_handle) {
+        if (s_custom_cmd_cb) {
+            uint8_t resp_buf[512];
+            uint16_t resp_len = 0;
+            int rc = s_custom_cmd_cb(conn_handle, data, data_len,
+                                     resp_buf, sizeof(resp_buf), &resp_len);
+            if (rc == 0 && resp_len > 0 && s_custom_cmd_notify_enabled) {
+                struct os_mbuf *om = ble_hs_mbuf_from_flat(resp_buf, resp_len);
+                if (om) {
+                    ble_gatts_notify_custom(conn_handle, s_srv_custom_cmd_chr_val_handle, om);
+                }
+            }
+        }
+    }
 
     return 0;
 }
@@ -805,4 +830,53 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
     if (om) {
         ble_gatts_notify_custom(conn, s_srv_log_chr_val_handle, om);
     }
+}
+
+uint16_t ble_srv_gatt_get_custom_cmd_chr_val_handle(void)
+{
+    GATT_LOCK();
+    uint16_t h = s_srv_custom_cmd_chr_val_handle;
+    GATT_UNLOCK();
+    return h;
+}
+
+bool ble_srv_gatt_custom_cmd_notify_enabled(void)
+{
+    GATT_LOCK();
+    bool en = s_custom_cmd_notify_enabled;
+    GATT_UNLOCK();
+    return en;
+}
+
+void ble_srv_gatt_set_custom_cmd_notify_enabled(bool enabled)
+{
+    GATT_LOCK();
+    s_custom_cmd_notify_enabled = enabled;
+    GATT_UNLOCK();
+}
+
+void ble_srv_gatt_set_custom_cmd_callback(ble_srv_custom_cmd_cb_t cb)
+{
+    GATT_LOCK();
+    s_custom_cmd_cb = cb;
+    GATT_UNLOCK();
+}
+
+bool ble_srv_gatt_custom_cmd_notify(uint16_t conn_handle, const uint8_t *data, uint16_t data_len)
+{
+    if (!s_custom_cmd_notify_enabled || s_srv_custom_cmd_chr_val_handle == 0) {
+        return false;
+    }
+    if (!data || data_len == 0) {
+        return false;
+    }
+    if (conn_handle == 0 || conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return false;
+    }
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, data_len);
+    if (!om) {
+        return false;
+    }
+    int rc = ble_gatts_notify_custom(conn_handle, s_srv_custom_cmd_chr_val_handle, om);
+    return rc == 0;
 }

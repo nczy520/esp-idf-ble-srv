@@ -43,6 +43,7 @@ from client.constants import (
     BLE_DM_RESTART_CHAR_UUID,
     BLE_DM_AUTH_CHAR_UUID,
     BLE_DM_LOG_CHAR_UUID,
+    BLE_DM_CUSTOM_CMD_CHAR_UUID,
     BLE_DM_CMD_RESTART,
     BLE_LED_CTRL_CHAR_UUID,
     BLE_LED_COLOR_CHAR_UUID,
@@ -143,6 +144,10 @@ class BleCore:
         self._disconnect_event = None
         self._log_notify_started = False
         self._log_notify_gen = 0
+
+        self._custom_cmd_notify_started = False
+        self._custom_cmd_notify_gen = 0
+        self._custom_cmd_callback = None
 
         self._ui_queue = queue.Queue()
         self._ui_flush_lock = threading.Lock()
@@ -350,6 +355,9 @@ class BleCore:
         self._notify_gen += 1
         self._log_notify_started = False
         self._log_notify_gen += 1
+        self._custom_cmd_notify_started = False
+        self._custom_cmd_notify_gen += 1
+        self._custom_cmd_callback = None
         self._reset_ota_state()
         if not self._restart_in_progress:
             self._log("设备已断开连接", "warn")
@@ -545,9 +553,71 @@ class BleCore:
             self._log(f"订阅设备日志失败: {e}", "warn")
             return False
 
+    def set_custom_cmd_callback(self, callback):
+        """设置自定义命令回调"""
+        self._custom_cmd_callback = callback
+
+    def _on_custom_cmd_notify(self, sender, data: bytearray):
+        """处理自定义命令特征值通知"""
+        try:
+            if self._custom_cmd_callback:
+                self._custom_cmd_callback(bytes(data))
+        except Exception:
+            pass
+
+    async def _unsubscribe_custom_cmd_notify(self):
+        """取消自定义命令特征值通知订阅"""
+        notify_gen = self._custom_cmd_notify_gen
+        client = self.ble_client
+        if self._custom_cmd_notify_started and client and self._is_connected:
+            try:
+                await client.stop_notify(BLE_DM_CUSTOM_CMD_CHAR_UUID)
+            except Exception:
+                pass
+        if self._custom_cmd_notify_gen == notify_gen:
+            self._custom_cmd_notify_started = False
+
+    async def _subscribe_custom_cmd_notify(self):
+        """订阅自定义命令特征值通知（接收设备端自定义响应）"""
+        if not self.ble_client or not self.ble_client.is_connected:
+            return False
+        if self._custom_cmd_notify_started:
+            return True
+        try:
+            self._custom_cmd_notify_gen += 1
+            await self.ble_client.start_notify(BLE_DM_CUSTOM_CMD_CHAR_UUID, self._on_custom_cmd_notify)
+            self._custom_cmd_notify_started = True
+            self._log("自定义命令通知订阅已开启", "info")
+            return True
+        except Exception as e:
+            self._log(f"订阅自定义命令通知失败: {e}", "warn")
+            return False
+
+    async def custom_cmd_send(self, data, response=True):
+        """发送自定义命令数据
+        Args:
+            data: bytes类型的数据
+            response: 是否需要等待响应（保留接口，目前通过notify返回）
+        Returns:
+            bool: 是否发送成功
+        """
+        if not self.connected:
+            return False
+        if not isinstance(data, (bytes, bytearray)):
+            return False
+        try:
+            if not self._custom_cmd_notify_started:
+                await self._subscribe_custom_cmd_notify()
+            await self._write_gatt(BLE_DM_CUSTOM_CMD_CHAR_UUID, bytes(data), response=response)
+            return True
+        except Exception as e:
+            self._log(f"自定义命令发送失败: {e}", "error")
+            return False
+
     async def disconnect_device(self):
         await self._stop_ota_notify()
         await self._unsubscribe_log_notify()
+        await self._unsubscribe_custom_cmd_notify()
         self._reset_ota_state()
         old_client = self.ble_client
         disc_event = self._disconnect_event

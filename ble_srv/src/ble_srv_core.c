@@ -181,6 +181,12 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
                      event->subscribe.cur_notify ? "enabled" : "disabled",
                      event->subscribe.conn_handle);
         }
+        else if (event->subscribe.attr_handle == ble_srv_gatt_get_custom_cmd_chr_val_handle()) {
+            ble_srv_gatt_set_custom_cmd_notify_enabled(event->subscribe.cur_notify);
+            ESP_LOGI(TAG, "Custom cmd notify %s (conn=%d)",
+                     event->subscribe.cur_notify ? "enabled" : "disabled",
+                     event->subscribe.conn_handle);
+        }
         break;
 
     case BLE_GAP_EVENT_MTU:

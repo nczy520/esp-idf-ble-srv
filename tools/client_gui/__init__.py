@@ -201,6 +201,7 @@ class BleDeviceManager:
             self.handlers.led_control._reset_led_ui_on_disconnect()
             self.handlers.wifi_control._reset_wifi_ui_on_disconnect()
             self.handlers.device_info._reset_device_info_ui_on_disconnect()
+            self.handlers.custom_cmd._reset_custom_cmd_ui_on_disconnect()
             self.handlers.connection._force_restore_all_buttons()
             self.handlers.connection.ble_log("连接断开，已重置所有状态", "warn")
         self.ble.set_disconnect_callback(ble_disconnect_callback)

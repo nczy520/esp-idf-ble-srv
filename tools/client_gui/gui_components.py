@@ -12,6 +12,7 @@ from client_gui.components.tabs.info_tab import InfoTabComponent
 from client_gui.components.tabs.led_tab import LEDTabComponent
 from client_gui.components.tabs.wifi_tab import WiFiTabComponent
 from client_gui.components.tabs.ota_tab import OTATabComponent
+from client_gui.components.tabs.custom_cmd_tab import CustomCmdTabComponent
 
 
 class GuiComponents:
@@ -87,9 +88,16 @@ class GuiComponents:
         self.ota_abort_btn = ota_tab_comp.ota_abort_btn
         self.ota_overlay = ota_tab_comp.ota_overlay
 
+        custom_cmd_tab_comp = CustomCmdTabComponent(self.app)
+        custom_cmd_tab = custom_cmd_tab_comp.build()
+        self.custom_cmd_tab = custom_cmd_tab_comp
+        self.cmd_log_view = custom_cmd_tab_comp.cmd_log_view
+        self.cmd_input = custom_cmd_tab_comp.cmd_input
+        self.custom_cmd_overlay = custom_cmd_tab_comp.custom_cmd_overlay
+
         # 构建TabBar
         self.tabs = ft.Tabs(
-            length=4,
+            length=5,
             expand=True,
             content=ft.Column(
                 expand=True,
@@ -100,12 +108,13 @@ class GuiComponents:
                             ft.Tab(label="LED 控制", icon=ft.Icons.LIGHTBULB_OUTLINE),
                             ft.Tab(label="WiFi", icon=ft.Icons.WIFI),
                             ft.Tab(label="OTA 升级", icon=ft.Icons.SYSTEM_UPDATE),
+                            ft.Tab(label="自定义命令", icon=ft.Icons.CODE),
                         ],
                         indicator_color=ft.Colors.BLUE,
                     ),
                     ft.TabBarView(
                         expand=True,
-                        controls=[info_tab, led_tab, wifi_tab, ota_tab],
+                        controls=[info_tab, led_tab, wifi_tab, ota_tab, custom_cmd_tab],
                     ),
                 ],
             ),
