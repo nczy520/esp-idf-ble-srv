@@ -485,7 +485,7 @@ void ble_srv_log_write(ble_srv_log_level_t level, const char *tag, const char *f
     }
 
     char line[BLE_SRV_LOG_LINE_SIZE];
-    char ts_buf[32];
+    char ts_buf[64];
     ble_srv_log_format_timestamp(ts_buf, sizeof(ts_buf));
 
     int prefix_len = snprintf(line, sizeof(line), "%s [%s] [%s] ",
