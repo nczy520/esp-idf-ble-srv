@@ -452,7 +452,7 @@ void ble_srv_log_deinit(void)
         esp_vfs_spiffs_unregister(NULL);
     } else if (s_storage == BLE_SRV_LOG_STORAGE_SD) {
 #ifdef CONFIG_BLE_SRV_LOG_SD_ENABLED
-        esp_vfs_fat_sdmmc_unmount();
+        esp_vfs_fat_sdcard_unmount(BLE_SRV_LOG_SD_PATH, NULL);
 #endif
     }
 
