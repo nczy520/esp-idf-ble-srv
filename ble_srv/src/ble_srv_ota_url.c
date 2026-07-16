@@ -138,6 +138,20 @@ typedef enum {
     VERSION_CHECK_DOWNGRADE = 4,
 } version_check_result_t;
 
+static void ota_http_client_config_init(esp_http_client_config_t *cfg, const char *url, int buffer_size)
+{
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->url = url;
+    cfg->cert_pem = NULL;
+    cfg->crt_bundle_attach = esp_crt_bundle_attach;
+    cfg->timeout_ms = HTTP_TIMEOUT_MS;
+    cfg->keep_alive_enable = false;
+    cfg->buffer_size = buffer_size;
+#ifdef CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK
+    cfg->skip_cert_common_name_check = true;
+#endif
+}
+
 static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 {
     fw_ver_t cur_ver;
@@ -154,18 +168,9 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 
     if (ble_srv_ota_is_abort_requested() || !ble_srv_ota_gen_valid(gen)) return VERSION_CHECK_ABORT;
 
-    esp_http_client_config_t cfg = {
-        .url = fw_url,
-        .cert_pem = NULL,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = HTTP_TIMEOUT_MS,
-        .keep_alive_enable = false,
-        .buffer_size = FW_HEADER_BUF_SIZE,
-        .buffer_size_tx = 1024,
-#ifdef CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK
-        .skip_cert_common_name_check = true,
-#endif
-    };
+    esp_http_client_config_t cfg;
+    ota_http_client_config_init(&cfg, fw_url, FW_HEADER_BUF_SIZE);
+    cfg.buffer_size_tx = 1024;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
@@ -179,7 +184,31 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
-        OTA_LOGW("HTTP open failed: %s (0x%x), skipping version check", esp_err_to_name(err), err);
+        OTA_LOGE("HTTP connection failed: %s (0x%x)", esp_err_to_name(err), err);
+        OTA_LOGE("  URL: %s", fw_url);
+        switch (err) {
+        case ESP_ERR_HTTP_CONNECT:
+        case ESP_ERR_HTTP_CONNECTING:
+            OTA_LOGE("  Reason: cannot connect to server");
+            OTA_LOGE("  Check: server address is correct, server is running");
+            break;
+        case ESP_ERR_HTTP_INVALID_TRANSPORT:
+            OTA_LOGE("  Reason: invalid transport scheme (HTTP is not supported)");
+            OTA_LOGE("  Only HTTPS URLs are supported, please use https://");
+            break;
+        case ESP_ERR_HTTP_FETCH_HEADER:
+            OTA_LOGE("  Reason: failed to fetch HTTP response headers");
+            OTA_LOGE("  Check: URL points to a valid HTTP endpoint");
+            break;
+        case ESP_ERR_TIMEOUT:
+            OTA_LOGE("  Reason: connection timed out");
+            OTA_LOGE("  Check: network stability, server responsiveness");
+            break;
+        default:
+            OTA_LOGE("  Reason: network or protocol error (0x%x)", err);
+            OTA_LOGE("  Check: WiFi is connected, URL is correct, server is reachable");
+            break;
+        }
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return VERSION_CHECK_SKIP;
@@ -193,10 +222,21 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
 
     int64_t fetch_ret = esp_http_client_fetch_headers(client);
     if (fetch_ret < 0) {
-        OTA_LOGW("HTTP fetch headers failed: %s (%lld), skipping version check",
-                 esp_err_to_name((esp_err_t)fetch_ret), (long long)fetch_ret);
+        OTA_LOGE("HTTP fetch headers failed: %s (%lld)", esp_err_to_name((esp_err_t)fetch_ret), (long long)fetch_ret);
+        OTA_LOGE("  URL: %s", fw_url);
         int64_t clen = esp_http_client_get_content_length(client);
-        OTA_LOGW("  content_length=%lld", (long long)clen);
+        int sc = esp_http_client_get_status_code(client);
+        OTA_LOGE("  HTTP status: %d, content_length: %lld", sc, (long long)clen);
+        if (sc == 404) {
+            OTA_LOGE("  File not found on server (HTTP 404)");
+            OTA_LOGE("  Check: firmware file exists at the URL path");
+        } else if (sc == 403) {
+            OTA_LOGE("  Access denied (HTTP 403)");
+            OTA_LOGE("  Check: URL does not require authentication");
+        } else if (sc >= 500) {
+            OTA_LOGE("  Server error (HTTP %d)", sc);
+            OTA_LOGE("  Check: server is functioning correctly");
+        }
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return VERSION_CHECK_SKIP;
@@ -410,17 +450,8 @@ static void url_task(void *arg)
     OTA_LOGI("Downloading: %s", s_ota_url);
     BLE_SRV_LOGI(TAG, "Download started: %s", s_ota_url);
 
-    esp_http_client_config_t http_cfg = {
-        .url = s_ota_url,
-        .cert_pem = NULL,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = HTTP_TIMEOUT_MS,
-        .keep_alive_enable = false,
-        .buffer_size = HTTP_BUFFER_SIZE,
-#ifdef CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK
-        .skip_cert_common_name_check = true,
-#endif
-    };
+    esp_http_client_config_t http_cfg;
+    ota_http_client_config_init(&http_cfg, s_ota_url, HTTP_BUFFER_SIZE);
 
     esp_https_ota_config_t ota_cfg = { .http_config = &http_cfg };
 
@@ -653,15 +684,16 @@ void ble_srv_ota_url_deinit(void)
         TaskHandle_t task = s_url_task;
         ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
         xTaskNotifyGive(task);
-        s_url_task = NULL;
         int wait = 0;
         int max_wait_ticks = URL_DEINIT_WAIT_MS / URL_DEINIT_POLL_MS;
-        while (wait < max_wait_ticks) {
+        while (wait < max_wait_ticks && s_url_task != NULL) {
             vTaskDelay(pdMS_TO_TICKS(URL_DEINIT_POLL_MS));
             wait++;
         }
-        OTA_LOGW("URL OTA task did not exit in time, force deleting");
-        vTaskDelete(task);
+        if (s_url_task != NULL) {
+            OTA_LOGW("URL OTA task did not exit in time");
+            s_url_task = NULL;
+        }
     }
     if (s_ota_url) {
         heap_caps_free(s_ota_url);
@@ -674,6 +706,21 @@ bool ble_srv_ota_url_start(const char *url)
 {
     if (!url || strlen(url) == 0) {
         OTA_LOGE("Invalid URL");
+        return false;
+    }
+
+    if (strncmp(url, "http://", 7) == 0) {
+        OTA_LOGE("HTTP is not supported, please use HTTPS URL");
+        OTA_LOGE("  URL: %s", url);
+        OTA_LOGE("  HTTP connections are insecure and blocked by ESP-TLS");
+        OTA_LOGE("  Use HTTPS: https://your-server.com/firmware.bin");
+        return false;
+    }
+
+    if (strncmp(url, "https://", 8) != 0) {
+        OTA_LOGE("Invalid URL scheme: must start with https://");
+        OTA_LOGE("  URL: %s", url);
+        OTA_LOGE("  Supported format: https://your-server.com/firmware.bin");
         return false;
     }
 
@@ -693,20 +740,19 @@ bool ble_srv_ota_url_start(const char *url)
         return false;
     }
 
-    strncpy(s_ota_url, url, BLE_OTA_URL_MAX_URL_LEN);
-    s_ota_url[BLE_OTA_URL_MAX_URL_LEN] = '\0';
-
     TaskHandle_t task_handle = NULL;
     BaseType_t ok = xTaskCreate(url_task, "ota_url", OTA_URL_TASK_STACK,
                                  (void *)(uintptr_t)gen,
                                  OTA_URL_TASK_PRIO, &task_handle);
     if (ok != pdPASS) {
         OTA_LOGE("Failed to create URL OTA task");
-        s_url_task = NULL;
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return false;
     }
     s_url_task = task_handle;
+
+    strncpy(s_ota_url, url, BLE_OTA_URL_MAX_URL_LEN);
+    s_ota_url[BLE_OTA_URL_MAX_URL_LEN] = '\0';
 
     OTA_LOGI("URL OTA started: %s, gen=%u", url, gen);
     BLE_SRV_LOGI(TAG, "OTA start initiated: %s", url);

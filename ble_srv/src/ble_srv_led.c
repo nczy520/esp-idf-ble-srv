@@ -59,6 +59,7 @@ static ble_led_effect_t s_effect = BLE_LED_EFFECT_NONE;
 static uint8_t s_speed = 50;
 
 static TaskHandle_t s_effect_task = NULL;
+static volatile bool s_effect_task_done = false;
 
 static void ble_srv_led_send_pixel(uint8_t red, uint8_t green, uint8_t blue);
 
@@ -207,9 +208,11 @@ static void ble_srv_led_effect_task(void *arg)
     ble_led_effect_t effect = BLE_LED_EFFECT_NONE;
     ble_led_effect_t last_effect = BLE_LED_EFFECT_NONE;
 
+    int lock_fail_count = 0;
     while (1) {
         bool should_exit = false;
         if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) == pdTRUE) {
+            lock_fail_count = 0;
             if (s_effect_task != self_handle) {
                 should_exit = true;
             }
@@ -222,7 +225,12 @@ static void ble_srv_led_effect_task(void *arg)
             }
             xSemaphoreGive(s_lock);
         } else {
-            ESP_LOGW(TAG, "Failed to take LED lock in effect task");
+            lock_fail_count++;
+            ESP_LOGW(TAG, "Failed to take LED lock in effect task (count=%d)", lock_fail_count);
+            if (lock_fail_count > 10) {
+                ESP_LOGE(TAG, "LED lock failed too many times, exiting effect task");
+                break;
+            }
             vTaskDelay(pdMS_TO_TICKS(LED_LOCK_RETRY_MS));
             continue;
         }
@@ -261,6 +269,7 @@ static void ble_srv_led_effect_task(void *arg)
         xSemaphoreGive(s_lock);
     }
 
+    s_effect_task_done = true;
     vTaskDelete(NULL);
 }
 
@@ -279,6 +288,9 @@ static void ble_srv_led_start_effect(void)
     }
 
     BaseType_t ret = xTaskCreate(ble_srv_led_effect_task, "led_eff", LED_TASK_STACK, NULL, LED_TASK_PRIO, &s_effect_task);
+    if (ret == pdPASS) {
+        s_effect_task_done = false;
+    }
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create effect task");
         s_effect_task = NULL;
@@ -313,6 +325,9 @@ static void ble_srv_led_stop_effect(uint32_t wait_ms)
         while (waited < wait_ms) {
             vTaskDelay(pdMS_TO_TICKS(10));
             waited += 10;
+            if (s_effect_task_done) {
+                break;
+            }
         }
     }
 }

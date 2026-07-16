@@ -292,9 +292,18 @@ bool ble_srv_wifi_forget(void)
     nvs_handle_t handle;
     err = nvs_open(BLE_WIFI_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err == ESP_OK) {
-        nvs_erase_all(handle);
-        nvs_commit(handle);
+        err = nvs_erase_all(handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to erase all NVS: %s", esp_err_to_name(err));
+        } else {
+            err = nvs_commit(handle);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(err));
+            }
+        }
         nvs_close(handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(err));
     }
 
     esp_wifi_disconnect();

@@ -209,16 +209,22 @@ class CustomCmdHandler(BaseHandler):
                 while not self._auto_send_stop_event.is_set():
                     if not self.ble.connected:
                         break
-                    self.app.run_async(self.ble.custom_cmd_send(data), on_auto_send_done)
+                    try:
+                        self.app.run_async(self.ble.custom_cmd_send(data), on_auto_send_done)
+                    except Exception as e:
+                        self.app.ui_call(lambda: self.log(f"定时发送失败: {e}", "error"))
+                        break
                     self._auto_send_stop_event.wait(interval_sec)
             except Exception as e:
-                self.log(f"定时发送线程异常: {e}", "error")
+                self.app.ui_call(lambda: self.log(f"定时发送线程异常: {e}", "error"))
             finally:
                 self.auto_send_running = False
-                self.ui.custom_cmd_tab.auto_send_switch.value = False
-                self.ui.custom_cmd_tab.interval_field.disabled = True
-                self.safe_update()
-                self.log("定时发送已停止", "info")
+                def _cleanup():
+                    self.ui.custom_cmd_tab.auto_send_switch.value = False
+                    self.ui.custom_cmd_tab.interval_field.disabled = True
+                    self.safe_update()
+                    self.log("定时发送已停止", "info")
+                self.app.ui_call(_cleanup)
 
         self._auto_send_thread = threading.Thread(target=auto_send_loop, daemon=True)
         self._auto_send_thread.start()

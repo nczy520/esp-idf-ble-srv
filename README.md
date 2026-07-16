@@ -3,12 +3,12 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Version](https://img.shields.io/badge/version-1.3.0-blueviolet)](ble_srv/idf_component.yml)
+[![Version](https://img.shields.io/badge/version-1.3.1-blueviolet)](ble_srv/idf_component.yml)
 
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 1.3.0 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 1.3.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
@@ -30,11 +30,76 @@ ESP32 / ESP32-S2 / ESP32-S3 / ESP32-C3 / ESP32-C6 / ESP32-H2
 
 ### 1. 添加组件
 
-将 `ble_srv` 目录复制到你的项目 `components/` 下，或通过 ESP-IDF 组件管理器引入：
+支持以下五种方式：
+
+#### 方式一：直接从 GitHub 引用（推荐）
+
+在你的项目根目录下编辑 `idf_component.yml`（若不存在则创建），添加以下依赖配置：
+
+```yaml
+dependencies:
+  ble_srv:
+    git: https://github.com/your-org/esp-idf-ble-srv.git
+    path: ble_srv
+    version: v1.3.1   # 可选：指定 tag、分支或 commit hash
+```
+
+> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v1.3.1`）以保证版本可追溯。
+
+配置完成后执行：
 
 ```bash
-idf.py add-dependency "ble_srv^1.3.0"
+idf.py reconfigure
 ```
+
+ESP-IDF 组件管理器会自动从 GitHub 克隆并引入 `ble_srv` 组件。
+
+#### 方式二：通过 ESP-IDF 组件管理器引入
+
+```bash
+idf.py add-dependency "ble_srv^1.3.1"
+```
+
+该命令会自动将依赖添加到 `idf_component.yml` 中，并从 ESP-IDF 组件仓库下载。
+
+#### 方式三：通过本地路径引用
+
+在项目根目录的 `idf_component.yml` 中指定本地路径：
+
+```yaml
+dependencies:
+  ble_srv:
+    path: ../esp-idf-ble-srv/ble_srv   # 相对于项目根目录的路径
+```
+
+适用于本地开发调试场景，修改组件代码后可立即生效。
+
+#### 方式四：通过 EXTRA_COMPONENT_DIRS 配置
+
+在项目根目录的 `CMakeLists.txt` 中添加：
+
+```cmake
+set(EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/../esp-idf-ble-srv/ble_srv")
+```
+
+或通过环境变量设置（临时生效）：
+
+```bash
+export EXTRA_COMPONENT_DIRS="/path/to/esp-idf-ble-srv/ble_srv"
+idf.py build
+```
+
+> **注意**：ESP-IDF v5.x/v6.x 不推荐在 `main/CMakeLists.txt` 中使用 `add_subdirectory`，会导致构建系统解析组件依赖时出错。应使用组件化方式接入。
+
+#### 方式五：手动复制组件
+
+将 `ble_srv` 目录复制到你的项目 `components/` 目录下。
+
+```bash
+cp -r /path/to/esp-idf-ble-srv/ble_srv /path/to/your-project/components/
+```
+
+适用于离线开发或需要完全隔离组件代码的场景。
 
 ### 2. 配置 menuconfig
 
@@ -202,8 +267,8 @@ docs/
   PYTHON_CLI.md            # CLI客户端详细使用说明
   PYTHON_GUI.md            # GUI客户端详细使用说明
 tools/
-  client.py                # Python BLE 命令行客户端 v1.3.0
-  client_gui.py            # Python BLE GUI 客户端入口 v1.3.0
+  client.py                # Python BLE 命令行客户端 v1.3.1
+  client_gui.py            # Python BLE GUI 客户端入口 v1.3.1
   client/                  # CLI客户端核心模块
   client_gui/              # GUI客户端模块
 examples/
@@ -246,7 +311,7 @@ examples/
 
 ## 变更记录
 
-### v1.3.0 (2025-07-14)
+### v1.3.1 (2026-07-15)
 
 **新增功能 (C 固件)**:
 - **应用层认证**: 新增 `0xFFE8` 认证特征，BLE 连接后客户端需写入密码认证，认证失败设备主动断开连接

@@ -42,6 +42,7 @@ static char s_log_file_path[128] = {0};
 static uint32_t s_current_file_size = 0;
 static bool s_initialized = false;
 static int64_t s_boot_time_us = 0;
+static sdmmc_card_t *s_sd_card = NULL;
 
 static QueueHandle_t s_log_queue = NULL;
 static uint8_t *s_log_queue_storage = NULL;
@@ -249,7 +250,7 @@ static bool ble_srv_log_mount_sd(void)
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
     slot_config.width = 1;
 
-    esp_err_t ret = esp_vfs_fat_sdmmc_mount(BLE_SRV_LOG_SD_PATH, &host, &slot_config, &mount_config, NULL);
+    esp_err_t ret = esp_vfs_fat_sdmmc_mount(BLE_SRV_LOG_SD_PATH, &host, &slot_config, &mount_config, &s_sd_card);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to mount SD card: %s", esp_err_to_name(ret));
         return false;
@@ -452,7 +453,9 @@ void ble_srv_log_deinit(void)
         esp_vfs_spiffs_unregister(NULL);
     } else if (s_storage == BLE_SRV_LOG_STORAGE_SD) {
 #ifdef CONFIG_BLE_SRV_LOG_SD_ENABLED
-        esp_vfs_fat_sdcard_unmount(BLE_SRV_LOG_SD_PATH, NULL);
+        esp_vfs_unregister(BLE_SRV_LOG_SD_PATH);
+        sdmmc_host_deinit();
+        s_sd_card = NULL;
 #endif
     }
 
@@ -748,6 +751,54 @@ bool ble_srv_log_delete_file(const char *filename)
     LOG_UNLOCK();
 
     return result;
+}
+
+bool ble_srv_log_get_storage_info(ble_srv_log_storage_info_t *info)
+{
+    if (!info) {
+        return false;
+    }
+
+    memset(info, 0, sizeof(*info));
+
+    if (!s_initialized || s_storage == BLE_SRV_LOG_STORAGE_NONE) {
+        return false;
+    }
+
+    info->storage_type = (uint8_t)s_storage;
+
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+
+    if (s_storage == BLE_SRV_LOG_STORAGE_SPIFFS) {
+        size_t total = 0, used = 0;
+        if (esp_spiffs_info(NULL, &total, &used) == ESP_OK) {
+            info->total_size = (uint32_t)total;
+            info->used_size = (uint32_t)used;
+            info->free_size = (uint32_t)(total - used);
+        }
+    } else {
+        struct statvfs vfs_buf;
+        if (statvfs(base_path, &vfs_buf) == 0) {
+            info->total_size = (uint32_t)(vfs_buf.f_frsize * vfs_buf.f_blocks);
+            info->free_size = (uint32_t)(vfs_buf.f_frsize * vfs_buf.f_bavail);
+            info->used_size = info->total_size - info->free_size;
+        }
+    }
+
+    char log_dir[256];
+    snprintf(log_dir, sizeof(log_dir), "%s%s", base_path, BLE_SRV_LOG_DIR);
+    DIR *dir = opendir(log_dir);
+    if (dir) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (entry->d_type == DT_REG) {
+                info->file_count++;
+            }
+        }
+        closedir(dir);
+    }
+
+    return true;
 }
 
 void ble_srv_log_set_level(ble_srv_log_level_t level)

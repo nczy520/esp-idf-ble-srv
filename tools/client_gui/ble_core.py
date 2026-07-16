@@ -70,6 +70,7 @@ from client.constants import (
     BLE_DM_LOG_FILE_CONTENT_CHAR_UUID,
     BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID,
     BLE_DM_LOG_HTTP_CTRL_CHAR_UUID,
+    BLE_DM_LOG_STORAGE_CHAR_UUID,
     BLE_LOG_HTTP_CMD_STOP,
     BLE_LOG_HTTP_CMD_START,
     BLE_LOG_HTTP_CMD_STATUS,
@@ -86,6 +87,7 @@ from client.models import (
     OTAState,
     OTAError,
     WiFiStatus,
+    LogStorageInfo,
 )
 
 
@@ -120,8 +122,7 @@ _UI_FLUSH_INTERVAL = 0.05
 class BleCore:
     """BLE设备管理器核心类"""
 
-    def __init__(self, event_loop=None):
-        self.event_loop = event_loop
+    def __init__(self):
         self.ble_client = None
         self.device_address = None
         self.device_name = None
@@ -346,8 +347,8 @@ class BleCore:
         else:
             try:
                 self._log_callback(msg, direction)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[BLE] Log callback error: {e}")
 
     def _make_disconnect_handler(self, gen):
         def _handler(client):
@@ -1167,10 +1168,8 @@ class BleCore:
                     self._ota_ack_event.set()
                 self._notify_gen += 1
                 self._ota_notify_started = False
-        except Exception:
-            pass
-
-    # ==================== 日志文件操作 ====================
+        except Exception as e:
+            print(f"[BLE] OTA status handler error: {e}")
 
     async def get_log_file_list(self):
         """获取日志文件列表，返回 [{"name":..., "size":..., "mtime":...}, ...]"""
@@ -1183,13 +1182,13 @@ class BleCore:
             return []
         files = []
         offset = 1
-        entry_size = 64 + 4 + 4  # name[64] + size(u32) + mtime(u32) = 72
+        entry_size = 16 + 4 + 4  # name[16] + size(u32) + mtime(u32) = 24
         for i in range(count):
             if offset + entry_size > len(data):
                 break
-            name_bytes = data[offset:offset + 64]
+            name_bytes = data[offset:offset + 16]
             name = name_bytes.split(b'\x00')[0].decode('utf-8', errors='replace')
-            size, mtime = _struct.unpack_from('<II', data, offset + 64)
+            size, mtime = _struct.unpack_from('<II', data, offset + 16)
             files.append({"name": name, "size": size, "mtime": mtime})
             offset += entry_size
         self._log(f"获取到 {len(files)} 个日志文件", "rx")
@@ -1276,5 +1275,13 @@ class BleCore:
         except Exception as e:
             self._log(f"写入设备日志失败: {e}", "err")
             return False
+
+    async def read_log_storage_info(self):
+        """读取日志存储信息（总大小、已用、剩余、文件数）"""
+        data = await self._read_gatt(BLE_DM_LOG_STORAGE_CHAR_UUID)
+        if data:
+            self._log(f"存储信息原始数据 ({len(data)} bytes): {data.hex()}", "debug")
+            return LogStorageInfo(data)
+        return None
 
 

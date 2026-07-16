@@ -39,8 +39,7 @@ static SemaphoreHandle_t s_state_lock = NULL;
 static char s_device_name[64] = {0};
 static TimerHandle_t s_restart_timer = NULL;
 
-#define STATE_LOCK_TIMEOUT_MS    100
-#define STATE_LOCK()   do { if (s_state_lock) xSemaphoreTake(s_state_lock, pdMS_TO_TICKS(STATE_LOCK_TIMEOUT_MS)); } while(0)
+#define STATE_LOCK()   do { if (s_state_lock) xSemaphoreTake(s_state_lock, portMAX_DELAY); } while(0)
 #define STATE_UNLOCK() do { if (s_state_lock) xSemaphoreGive(s_state_lock); } while(0)
 
 static void restart_timer_cb(TimerHandle_t timer)
@@ -440,10 +439,15 @@ void ble_srv_schedule_restart(uint32_t delay_ms)
                                         pdFALSE, NULL, restart_timer_cb);
         if (s_restart_timer) {
             xTimerStart(s_restart_timer, 0);
+        } else {
+            ESP_LOGE(TAG, "Failed to create restart timer");
+            BLE_SRV_LOGE(TAG, "Failed to create restart timer");
         }
         return;
     }
-    xTimerChangePeriod(s_restart_timer, pdMS_TO_TICKS(delay_ms), 0);
+    if (xTimerChangePeriod(s_restart_timer, pdMS_TO_TICKS(delay_ms), 0) != pdPASS) {
+        ESP_LOGW(TAG, "xTimerChangePeriod failed for restart timer");
+    }
     xTimerReset(s_restart_timer, 0);
     xTimerStart(s_restart_timer, 0);
 }

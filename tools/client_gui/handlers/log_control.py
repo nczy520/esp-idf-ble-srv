@@ -62,10 +62,12 @@ class LogControlHandler(BaseHandler):
                     })
                 except Exception:
                     continue
-            files.sort(key=lambda x: x["mtime"], reverse=True)
+            files.sort(key=lambda x: x["filename"], reverse=True)
+            files = files[:20]
             self._update_file_list_ui(files)
 
         self._run_with_loading(page.refresh_btn, self.ble.get_log_file_list(), on_done, "刷新中...")
+        self.refresh_storage_info()
 
     def _update_file_list_ui(self, files):
         page = self._log_page()
@@ -142,9 +144,11 @@ class LogControlHandler(BaseHandler):
                 ], spacing=2),
             ], spacing=8, alignment=ft.MainAxisAlignment.START),
             bgcolor=ft.Colors.BLUE_50 if is_selected else ft.Colors.TRANSPARENT,
-            border=ft.border.all(
-                1,
-                ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT,
+            border=ft.border.Border(
+                left=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
+                top=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
+                right=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
+                bottom=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
             ) if is_selected else None,
             padding=ft.Padding(left=8, right=8, top=6, bottom=6),
             border_radius=4,
@@ -307,6 +311,24 @@ class LogControlHandler(BaseHandler):
             self._update_http_ui(status.get("running", False), status.get("url", ""))
 
         self.app.run_async(self.ble.log_http_get_status(), on_status)
+
+    def refresh_storage_info(self):
+        if not self.ble.connected:
+            return
+        page = self._log_page()
+        if not page:
+            return
+
+        def on_done(result):
+            if isinstance(result, Exception):
+                self.app.show_snack(f"读取存储信息失败: {result}")
+                return
+            if result is None:
+                return
+            page.update_storage_info(result)
+            self.safe_update()
+
+        self.app.run_async(self.ble.read_log_storage_info(), on_done)
 
     def on_tab_selected(self):
         self.refresh_log_list()

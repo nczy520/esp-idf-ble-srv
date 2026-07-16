@@ -43,8 +43,8 @@ class ConnectionHandler(BaseHandler):
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
-        except Exception:
-            pass
+        except Exception as e:
+            self.log(f"连接时间更新异常: {e}", "error")
 
     def _start_conn_time_updater(self):
         """启动连接时间更新器"""
@@ -221,7 +221,7 @@ class ConnectionHandler(BaseHandler):
         self._device_connect_btns.clear()
         self.safe_update()
 
-        def on_device_found(device_info):
+        def _handle_scan_device_found(device_info):
             for existing in self.devices:
                 if existing['address'] == device_info['address']:
                     return
@@ -242,7 +242,7 @@ class ConnectionHandler(BaseHandler):
             self.safe_update()
 
         self.app.run_async(
-            self.ble.scan_devices(timeout=timeout, name_filter=name_filter, on_device_found=on_device_found),
+            self.ble.scan_devices(timeout=timeout, name_filter=name_filter, on_device_found=_handle_scan_device_found),
             on_done
         )
 
@@ -311,6 +311,8 @@ class ConnectionHandler(BaseHandler):
                 return
             ok, mtu_or_err = result
             if ok:
+                from client_gui import save_last_device
+                save_last_device(device['name'], device['address'])
                 self.log(f"连接成功 (MTU={mtu_or_err})", "success")
                 self.ble_log(f"连接成功 MTU={mtu_or_err}", "success")
                 self.update_connection_ui(True)

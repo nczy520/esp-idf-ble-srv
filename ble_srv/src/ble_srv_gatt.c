@@ -78,6 +78,7 @@ static uint16_t s_srv_log_file_list_chr_val_handle = 0;
 static uint16_t s_srv_log_file_content_chr_val_handle = 0;
 static uint16_t s_srv_log_file_download_chr_val_handle = 0;
 static uint16_t s_srv_log_http_ctrl_chr_val_handle = 0;
+static uint16_t s_srv_log_storage_chr_val_handle = 0;
 static char *s_selected_log_file = NULL;
 
 static const ble_uuid16_t s_srv_svc_uuid          = BLE_UUID16_INIT(BLE_SRV_SVC_UUID);
@@ -99,6 +100,7 @@ static const ble_uuid16_t s_srv_log_file_list_chr_uuid = BLE_UUID16_INIT(BLE_SRV
 static const ble_uuid16_t s_srv_log_file_content_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_CONTENT_CHAR_UUID);
 static const ble_uuid16_t s_srv_log_file_download_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_DOWNLOAD_CHAR_UUID);
 static const ble_uuid16_t s_srv_log_http_ctrl_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_HTTP_CTRL_CHAR_UUID);
+static const ble_uuid16_t s_srv_log_storage_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_STORAGE_CHAR_UUID);
 
 static const ble_uuid16_t s_ota_svc_uuid          = BLE_UUID16_INIT(BLE_OTA_SVC_UUID);
 static const ble_uuid16_t s_ota_bt_cmd_chr_uuid   = BLE_UUID16_INIT(BLE_OTA_BT_CMD_CHAR_UUID);
@@ -211,6 +213,12 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
                 .val_handle = &s_srv_log_http_ctrl_chr_val_handle,
+            },
+            {
+                .uuid = &s_srv_log_storage_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_READ,
+                .val_handle = &s_srv_log_storage_chr_val_handle,
             },
             { 0 },
         },
@@ -458,6 +466,13 @@ static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct bl
         if (rc != 0) return BLE_ATT_ERR_INSUFFICIENT_RES;
 #endif
         return 0;
+    } else if (attr_handle == s_srv_log_storage_chr_val_handle) {
+        ble_srv_log_storage_info_t info;
+        if (ble_srv_log_get_storage_info(&info)) {
+            rc = os_mbuf_append(ctxt->om, &info, sizeof(info));
+            return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
+        return BLE_ATT_ERR_UNLIKELY;
     }
 #ifdef CONFIG_BLE_SRV_WIFI_ENABLED
     else if (attr_handle == s_wifi_status_chr_val_handle) {
@@ -857,13 +872,17 @@ bool ble_srv_gatt_is_auth_enabled(void)
 
 bool ble_srv_gatt_is_conn_authenticated(uint16_t conn_handle)
 {
-    (void)conn_handle;
+    if (conn_handle != ble_srv_get_conn_handle()) {
+        return false;
+    }
     return s_conn_authenticated;
 }
 
 void ble_srv_gatt_set_conn_authenticated(uint16_t conn_handle, bool authed)
 {
-    (void)conn_handle;
+    if (conn_handle != ble_srv_get_conn_handle()) {
+        return;
+    }
     s_conn_authenticated = authed;
 }
 
@@ -965,7 +984,7 @@ void ble_srv_gatt_log_send_raw(ble_srv_log_level_t level, const char *msg)
         return;
     }
 
-    static char line[BLE_SRV_LOG_MAX_LEN + 8];
+    char line[BLE_SRV_LOG_MAX_LEN + 8];
     int prefix_len = snprintf(line, sizeof(line), "[%c] ", ble_srv_gatt_log_level_char(level));
     if (prefix_len < 0 || prefix_len >= (int)sizeof(line)) {
         prefix_len = 0;
@@ -993,7 +1012,7 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
         return;
     }
 
-    static char body[BLE_SRV_LOG_MAX_LEN];
+    char body[BLE_SRV_LOG_MAX_LEN];
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(body, sizeof(body), fmt, ap);
@@ -1002,7 +1021,7 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
         return;
     }
 
-    static char line[BLE_SRV_LOG_MAX_LEN + 32];
+    char line[BLE_SRV_LOG_MAX_LEN + 32];
     int written;
     if (tag && tag[0]) {
         written = snprintf(line, sizeof(line), "[%c] [%s] %s", (char)level, tag, body);

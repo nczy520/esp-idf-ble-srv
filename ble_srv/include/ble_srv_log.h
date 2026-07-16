@@ -51,7 +51,7 @@ extern "C" {
 #define BLE_SRV_LOG_MAX_FILE_SIZE    (CONFIG_BLE_SRV_LOG_MAX_FILE_SIZE * 1024)
 #define BLE_SRV_LOG_MIN_FREE_SPACE   (CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE * 1024)
 #define BLE_SRV_LOG_FILE_LIST_MAX    20
-#define BLE_SRV_LOG_FILENAME_LEN     64
+#define BLE_SRV_LOG_FILENAME_LEN     16
 
 #ifndef CONFIG_BLE_SRV_LOG_HTTP_PORT
 #define CONFIG_BLE_SRV_LOG_HTTP_PORT 80
@@ -79,6 +79,14 @@ typedef struct __attribute__((packed)) {
     uint32_t mtime;
 } ble_srv_log_file_info_t;
 
+typedef struct __attribute__((packed)) {
+    uint32_t total_size;
+    uint32_t used_size;
+    uint32_t free_size;
+    uint32_t file_count;
+    uint8_t storage_type;
+} ble_srv_log_storage_info_t;
+
 bool ble_srv_log_init(void);
 void ble_srv_log_deinit(void);
 void ble_srv_log_write(ble_srv_log_level_t level, const char *tag, const char *fmt, ...);
@@ -92,6 +100,7 @@ void ble_srv_log_set_level(ble_srv_log_level_t level);
 ble_srv_log_level_t ble_srv_log_get_level(void);
 ble_srv_log_storage_t ble_srv_log_get_storage(void);
 bool ble_srv_log_time_is_valid(void);
+bool ble_srv_log_get_storage_info(ble_srv_log_storage_info_t *info);
 
 typedef enum {
     BLE_SRV_LOG_HTTP_CMD_STOP = 0,

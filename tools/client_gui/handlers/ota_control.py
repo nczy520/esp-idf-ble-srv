@@ -139,9 +139,9 @@ class OTAControlHandler(BaseHandler):
             self.log("请选择有效的固件文件", "warn")
             return
         fw_size = os.path.getsize(fw_path)
-        est_speed = 20 * 1024
+        est_speed = 10 * 1024
         est_transfer = fw_size / est_speed if est_speed > 0 else 120
-        timeout = max(300, int(est_transfer * 3))
+        timeout = max(120, int(est_transfer * 3))
         self.ota_running = True
         self.ui.ota_progress.value = 0
         self.ui.ota_status_text.value = "正在启动蓝牙OTA..."

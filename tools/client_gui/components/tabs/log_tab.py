@@ -26,6 +26,12 @@ class LogTabComponent(BaseTabComponent):
         self.url_container = None
         self.selected_file_name = None
         self._current_url = ""
+        self.storage_type_text = None
+        self.storage_total_text = None
+        self.storage_used_text = None
+        self.storage_free_text = None
+        self.storage_file_count_text = None
+        self.storage_usage_bar = None
 
     def _format_size(self, size):
         if size >= 1024 * 1024:
@@ -56,6 +62,71 @@ class LogTabComponent(BaseTabComponent):
             bgcolor=ft.Colors.with_opacity(0.5, ft.Colors.WHITE),
             visible=False,
         )
+
+    def _build_storage_info_card(self):
+        self.storage_type_text = ft.Text("存储类型: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT, weight=ft.FontWeight.W_500)
+        self.storage_total_text = ft.Text("总大小: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+        self.storage_used_text = ft.Text("已用: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+        self.storage_free_text = ft.Text("剩余: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+        self.storage_file_count_text = ft.Text("日志文件: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+        self.storage_usage_bar = ft.ProgressBar(
+            value=0,
+            bar_height=6,
+            border_radius=3,
+            color=ft.Colors.BLUE_500,
+            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
+        )
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.STORAGE, size=16, color=ft.Colors.BLUE_600),
+                    self.storage_type_text,
+                ], spacing=6),
+                ft.Container(height=6),
+                self.storage_usage_bar,
+                ft.Container(height=6),
+                ft.Row([
+                    self.storage_used_text,
+                    ft.Text("|", size=12, color=ft.Colors.OUTLINE),
+                    self.storage_total_text,
+                ], spacing=6),
+                ft.Row([
+                    self.storage_free_text,
+                    ft.Text("|", size=12, color=ft.Colors.OUTLINE),
+                    self.storage_file_count_text,
+                ], spacing=6),
+            ], spacing=2),
+            padding=ft.Padding(left=10, right=10, top=10, bottom=10),
+            bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+            border_radius=8,
+            border=ft.border.Border(
+                left=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                top=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                right=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                bottom=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+            ),
+        )
+
+    def update_storage_info(self, storage_info=None):
+        if storage_info is None:
+            self.storage_type_text.value = "存储类型: --"
+            self.storage_total_text.value = "总大小: --"
+            self.storage_used_text.value = "已用: --"
+            self.storage_free_text.value = "剩余: --"
+            self.storage_file_count_text.value = "日志文件: --"
+            self.storage_usage_bar.value = 0
+            return
+
+        self.storage_type_text.value = f"存储类型: {storage_info.get_storage_type_name()}"
+        self.storage_total_text.value = f"总大小: {storage_info._fmt_size(storage_info.total_size)}"
+        self.storage_used_text.value = f"已用: {storage_info._fmt_size(storage_info.used_size)}"
+        self.storage_free_text.value = f"剩余: {storage_info._fmt_size(storage_info.free_size)}"
+        self.storage_file_count_text.value = f"日志文件: {storage_info.file_count} 个"
+        if storage_info.total_size > 0:
+            self.storage_usage_bar.value = storage_info.used_size / storage_info.total_size
+        else:
+            self.storage_usage_bar.value = 0
 
     def build(self):
         self.log_file_list = ft.ListView(
@@ -133,6 +204,8 @@ class LogTabComponent(BaseTabComponent):
             content=ft.Column([
                 ft.Text("日志文件", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                 ft.Container(height=8),
+                self._build_storage_info_card(),
+                ft.Container(height=12),
                 ft.Container(
                     content=self.log_file_list,
                     border=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),

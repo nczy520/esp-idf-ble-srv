@@ -55,6 +55,8 @@ class DeviceInfo:
     }
 
     def __init__(self, data: bytes) -> None:
+        if len(data) < 129:
+            raise ValueError(f"DeviceInfo requires at least 129 bytes, got {len(data)}")
         self.cpu_freq_mhz: int = struct.unpack('<I', data[0:4])[0]
         self.uptime_seconds: int = struct.unpack('<I', data[4:8])[0]
         self.temperature_celsius: float = struct.unpack('<f', data[8:12])[0]
@@ -85,6 +87,8 @@ class DeviceInfo:
 
 class MemoryInfo:
     def __init__(self, data: bytes) -> None:
+        if len(data) < 40:
+            raise ValueError(f"MemoryInfo requires at least 40 bytes, got {len(data)}")
         self.internal_total: int = struct.unpack('<I', data[0:4])[0]
         self.internal_free: int = struct.unpack('<I', data[4:8])[0]
         self.internal_min_free: int = struct.unpack('<I', data[8:12])[0]
@@ -95,8 +99,8 @@ class MemoryInfo:
         self.psram_largest: int = struct.unpack('<I', data[28:32])[0]
         self.dma_free: int = struct.unpack('<I', data[32:36])[0]
         self.total_free: int = struct.unpack('<I', data[36:40])[0]
-        self.task_count: int = struct.unpack('<H', data[40:42])[0]
-        self.stack_hwm: int = struct.unpack('<H', data[42:44])[0]
+        self.task_count: int = struct.unpack('<H', data[40:42])[0] if len(data) >= 42 else 0
+        self.stack_hwm: int = struct.unpack('<H', data[42:44])[0] if len(data) >= 44 else 0
         self._legacy = len(data) < 44
 
     @staticmethod
@@ -197,6 +201,8 @@ class FlashInfo:
 
 class PartitionInfo:
     def __init__(self, data: bytes) -> None:
+        if len(data) < 26:
+            raise ValueError(f"PartitionInfo requires at least 26 bytes, got {len(data)}")
         self.address: int = struct.unpack('<I', data[0:4])[0]
         self.size: int = struct.unpack('<I', data[4:8])[0]
         self.type: int = struct.unpack('<B', data[8:9])[0]
@@ -221,6 +227,8 @@ class PartitionInfo:
 
 class OTAStatus:
     def __init__(self, data: bytes) -> None:
+        if len(data) < 11:
+            raise ValueError(f"OTAStatus requires at least 11 bytes, got {len(data)}")
         self.fw_size: int = struct.unpack('<I', data[0:4])[0]
         self.bytes_written: int = struct.unpack('<I', data[4:8])[0]
         self.state: int = struct.unpack('<B', data[8:9])[0]
@@ -264,6 +272,8 @@ class OTAStatus:
 
 class WiFiStatus:
     def __init__(self, data: bytes) -> None:
+        if len(data) < 6:
+            raise ValueError(f"WiFiStatus requires at least 6 bytes, got {len(data)}")
         self.ip_address: int = struct.unpack('<I', data[0:4])[0]
         self.connected: bool = bool(struct.unpack('<B', data[4:5])[0])
         self.rssi: int = struct.unpack('<B', data[5:6])[0]
@@ -276,6 +286,8 @@ class WiFiStatus:
 
 class TemperatureInfo:
     def __init__(self, data: bytes) -> None:
+        if len(data) < 8:
+            raise ValueError(f"TemperatureInfo requires at least 8 bytes, got {len(data)}")
         self.temperature_celsius: float = struct.unpack('<h', data[0:2])[0] / 10.0
         self.temperature_min: float = struct.unpack('<h', data[2:4])[0] / 10.0
         self.temperature_max: float = struct.unpack('<h', data[4:6])[0] / 10.0
@@ -286,6 +298,8 @@ class TemperatureInfo:
 
 class PowerInfo:
     def __init__(self, data: bytes) -> None:
+        if len(data) < 32:
+            raise ValueError(f"PowerInfo requires at least 32 bytes, got {len(data)}")
         self.total_power_mw: int = struct.unpack('<I', data[0:4])[0]
         self.cpu_power_mw: int = struct.unpack('<I', data[4:8])[0]
         self.wifi_power_mw: int = struct.unpack('<I', data[8:12])[0]
@@ -297,3 +311,49 @@ class PowerInfo:
 
     def __str__(self) -> str:
         return f"系统总功耗: {self.total_power_mw} mW\nCPU功耗: {self.cpu_power_mw} mW\nWiFi功耗: {self.wifi_power_mw} mW\n蓝牙功耗: {self.ble_power_mw} mW\n外设功耗: {self.peripherals_power_mw} mW\n最低功耗: {self.power_min_mw} mW\n最高功耗: {self.power_max_mw} mW\n采样次数: {self.power_samples}"
+
+class LogStorageInfo:
+    STORAGE_TYPE_NONE = 0
+    STORAGE_TYPE_SPIFFS = 1
+    STORAGE_TYPE_SD = 2
+
+    STORAGE_TYPE_NAMES = {
+        0: "未初始化",
+        1: "SPIFFS",
+        2: "SD卡",
+    }
+
+    def __init__(self, data: bytes) -> None:
+        if len(data) < 17:
+            raise ValueError(f"LogStorageInfo requires at least 17 bytes, got {len(data)}")
+        self.total_size: int = struct.unpack('<I', data[0:4])[0]
+        self.used_size: int = struct.unpack('<I', data[4:8])[0]
+        self.free_size: int = struct.unpack('<I', data[8:12])[0]
+        self.file_count: int = struct.unpack('<I', data[12:16])[0]
+        self.storage_type: int = struct.unpack('<B', data[16:17])[0]
+
+    @staticmethod
+    def _fmt_size(val: int) -> str:
+        if val >= 1024 * 1024:
+            return f"{val / (1024 * 1024):.2f} MB"
+        elif val >= 1024:
+            return f"{val / 1024:.2f} KB"
+        return f"{val} B"
+
+    @staticmethod
+    def _pct(part: int, total: int) -> str:
+        if total <= 0:
+            return "N/A"
+        return f"{part * 100 / total:.1f}%"
+
+    def get_storage_type_name(self) -> str:
+        return self.STORAGE_TYPE_NAMES.get(self.storage_type, f"未知({self.storage_type})")
+
+    def __str__(self) -> str:
+        lines = []
+        lines.append(f"存储类型: {self.get_storage_type_name()}")
+        lines.append(f"总大小: {self._fmt_size(self.total_size)}")
+        lines.append(f"已用: {self._fmt_size(self.used_size)} ({self._pct(self.used_size, self.total_size)})")
+        lines.append(f"剩余: {self._fmt_size(self.free_size)} ({self._pct(self.free_size, self.total_size)})")
+        lines.append(f"日志文件数: {self.file_count}")
+        return "\n".join(lines)

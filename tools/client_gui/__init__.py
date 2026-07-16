@@ -41,14 +41,48 @@ def load_window_position():
     return None, None
 
 
-def save_window_position(x, y):
+def _load_config():
+    config_path = get_config_path()
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_config(config):
     config_path = get_config_path()
     try:
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         with open(config_path, "w") as f:
-            json.dump({"window_x": x, "window_y": y}, f, indent=2)
+            json.dump(config, f, indent=2)
     except Exception as e:
         print(f"保存配置文件失败: {e}")
+
+
+def save_window_position(x, y):
+    config = _load_config()
+    config["window_x"] = x
+    config["window_y"] = y
+    _save_config(config)
+
+
+def save_last_device(name, address):
+    config = _load_config()
+    config["last_device_name"] = name
+    config["last_device_addr"] = address
+    _save_config(config)
+
+
+def load_last_device():
+    config = _load_config()
+    name = config.get("last_device_name")
+    addr = config.get("last_device_addr")
+    if name and addr:
+        return {"name": name, "address": addr}
+    return None
 
 
 def get_screen_size():
@@ -91,9 +125,9 @@ from client_gui.gui_handlers import GuiHandlers
 class BleDeviceManager:
     """BLE设备管理器主应用"""
 
-    def __init__(self, version="1.3.0"):
+    def __init__(self, version="1.3.1"):
         self.event_loop = asyncio.new_event_loop()
-        self.ble = BleCore(event_loop=self.event_loop)
+        self.ble = BleCore()
         self.devices = []
         self.scan_lock = False
         self.ota_running = False
@@ -253,7 +287,17 @@ class BleDeviceManager:
         
         # 初始化连接状态UI（未连接状态）
         self.handlers.connection.update_connection_ui(False)
-        
+
+        # 恢复上次选择的设备
+        last_device = load_last_device()
+        if last_device:
+            self.ble.selected_device_info = last_device
+            self.handlers.connection._selected_device_name = last_device['name']
+            self.handlers.connection._selected_device_addr = last_device['address']
+            self.ui.status_text.value = f"{last_device['name']} | {last_device['address']}"
+            self.ui.status_text.color = ft.Colors.ON_SURFACE
+            self.ui.connect_toggle_btn.disabled = False
+
         # 进入app时自动开始扫描蓝牙设备
         self.handlers.handle_scan()
 
@@ -261,7 +305,7 @@ class BleDeviceManager:
         ft.run(self.main)
 
 
-def main(version="1.3.0"):
+def main(version="1.3.1"):
     app = BleDeviceManager(version)
     app.run()
 
