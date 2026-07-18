@@ -159,6 +159,16 @@ bool ble_srv_wifi_provisioner_init(void)
     return true;
 }
 
+const char *ble_srv_wifi_get_ap_ssid(void)
+{
+    return s_prov_config.ap_ssid ? s_prov_config.ap_ssid : "";
+}
+
+const char *ble_srv_wifi_get_ap_password(void)
+{
+    return s_prov_config.ap_password ? s_prov_config.ap_password : "";
+}
+
 bool ble_srv_wifi_is_connected(void)
 {
     return wifi_prov_is_connected();

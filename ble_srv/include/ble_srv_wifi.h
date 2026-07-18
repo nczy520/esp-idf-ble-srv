@@ -32,6 +32,8 @@ void ble_srv_wifi_provisioner_deinit(void);
 bool ble_srv_wifi_connect(const char *ssid, const char *password);
 bool ble_srv_wifi_forget(void);
 bool ble_srv_wifi_get_status(ble_wifi_status_t *status);
+const char *ble_srv_wifi_get_ap_ssid(void);
+const char *ble_srv_wifi_get_ap_password(void);
 #endif
 
 #ifdef CONFIG_BLE_SRV_NTP_ENABLED
