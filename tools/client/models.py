@@ -314,12 +314,12 @@ class PowerInfo:
 
 class LogStorageInfo:
     STORAGE_TYPE_NONE = 0
-    STORAGE_TYPE_SPIFFS = 1
+    STORAGE_TYPE_LITTLEFS = 1
     STORAGE_TYPE_SD = 2
 
     STORAGE_TYPE_NAMES = {
         0: "未初始化",
-        1: "SPIFFS",
+        1: "LittleFS",
         2: "SD卡",
     }
 

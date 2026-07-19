@@ -3,6 +3,16 @@ dependencies:
     source:
       type: idf
     version: 6.0.2
+  joltwallet/littlefs:
+    component_hash: fab83a8a57de01b05441557d78e9d10c755413a1836af4b2762b539add0c14b1
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.22.2
   michmich/esp-idf-wifi-provisioner:
     component_hash: 4097d69b49e4781f951ceb80e2966daebc2dd47794c306059797abf4c9ecf1f1
     dependencies:
@@ -21,7 +31,8 @@ dependencies:
     version: 0.4.0
 direct_dependencies:
 - idf
+- joltwallet/littlefs
 - michmich/esp-idf-wifi-provisioner
-manifest_hash: f19ed8d5f9969f48c0a582d29e5ee7c4d6da5cb36794412baec4e42af3f539ec
+manifest_hash: bef0af45023df7eb79d5127f859eefb0c42531cf55eafa3440b491c7a5ec72df
 target: esp32s3
 version: 3.0.0

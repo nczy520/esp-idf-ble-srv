@@ -1,4 +1,4 @@
-# ble_srv 模组使用说明 v1.3.1
+# ble_srv 模组使用说明 v2.0.1
 
 ## 目录
 
@@ -27,7 +27,7 @@
 
 `ble_srv` 是基于 ESP-IDF NimBLE 协议栈的 BLE（蓝牙低功耗）服务组件，为 ESP32 系列芯片提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。组件采用模块化设计，各功能可通过 menuconfig 独立开关。
 
-**版本**: 1.3.1
+**版本**: 2.0.1
 **协议栈**: NimBLE（ESP-IDF 内置）
 **兼容**: ESP-IDF v5.x / v6.x（推荐 v6.0+）
 
@@ -150,7 +150,7 @@ cp -r ble_srv your_project/components/
 或通过 ESP-IDF 组件管理器添加：
 
 ```bash
-idf.py add-dependency "ble_srv^1.3.1"
+idf.py add-dependency "ble_srv^2.0.1"
 ```
 
 ### 2. 配置项目
@@ -374,14 +374,15 @@ CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MAX=80
 
 ### 日志系统配置
 
-日志系统支持将运行日志存储到 SPIFFS 或 SD 卡，并提供 HTTP 服务器接口用于浏览和下载日志文件。日志队列使用 PSRAM 静态分配，支持 512KB 总容量。
+日志系统支持将运行日志存储到 LittleFS 或 SD 卡，并提供 HTTP 服务器接口用于浏览和下载日志文件。日志队列使用 PSRAM 静态分配，支持 512KB 总容量。
 
 | 配置项 | 类型 | 默认值 | 依赖 | 说明 |
 |--------|------|--------|------|------|
 | `BLE_SRV_LOG_ENABLED` | bool | n | - | 启用日志系统 |
-| `BLE_SRV_LOG_SD_ENABLED` | bool | n | `BLE_SRV_LOG_ENABLED` | 启用 SD 卡存储支持（优先于 SPIFFS） |
+| `BLE_SRV_LOG_SD_ENABLED` | bool | n | `BLE_SRV_LOG_ENABLED` | 启用 SD 卡存储支持（优先于 LittleFS） |
 | `BLE_SRV_LOG_SD_PATH` | string | "/sdcard" | `BLE_SRV_LOG_SD_ENABLED` | SD 卡挂载路径 |
-| `BLE_SRV_LOG_SPIFFS_PATH` | string | "/spiffs" | `BLE_SRV_LOG_ENABLED` | SPIFFS 挂载路径 |
+| `BLE_SRV_LOG_LITTLEFS_PATH` | string | "/littlefs" | `BLE_SRV_LOG_ENABLED` | LittleFS 挂载路径 |
+| `BLE_SRV_LOG_LITTLEFS_PARTITION` | string | "littlefs" | `BLE_SRV_LOG_ENABLED` | LittleFS 分区标签（需与 partitions.csv 一致） |
 | `BLE_SRV_LOG_DIR` | string | "/log" | `BLE_SRV_LOG_ENABLED` | 日志目录名（位于存储路径下） |
 | `BLE_SRV_LOG_QUEUE_SIZE` | int | 1024 | `BLE_SRV_LOG_ENABLED` | 日志队列容量（条目数，PSRAM 分配） |
 | `BLE_SRV_LOG_LINE_SIZE` | int | 512 | `BLE_SRV_LOG_ENABLED` | 单条日志最大长度（字节） |
@@ -393,9 +394,9 @@ CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MAX=80
 
 **配置示例**:
 ```
-# 基础日志系统（使用 SPIFFS）
+# 基础日志系统（使用 LittleFS）
 CONFIG_BLE_SRV_LOG_ENABLED=y
-CONFIG_BLE_SRV_LOG_SPIFFS_PATH="/spiffs"
+CONFIG_BLE_SRV_LOG_LITTLEFS_PATH="/littlefs"
 CONFIG_BLE_SRV_LOG_DIR="/log"
 CONFIG_BLE_SRV_LOG_QUEUE_SIZE=1024
 CONFIG_BLE_SRV_LOG_LINE_SIZE=512
@@ -404,7 +405,7 @@ CONFIG_BLE_SRV_LOG_MAX_FILES=50
 CONFIG_BLE_SRV_LOG_MAX_FILE_SIZE=512
 CONFIG_BLE_SRV_LOG_HTTP_PORT=8080
 
-# 启用 SD 卡支持（需在 SPIFFS 之外额外启用）
+# 启用 SD 卡支持（需在 LittleFS 之外额外启用）
 CONFIG_BLE_SRV_LOG_SD_ENABLED=y
 CONFIG_BLE_SRV_LOG_SD_PATH="/sdcard"
 CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE=256
@@ -416,7 +417,12 @@ CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE=256
 - 队列使用 `xQueueCreateStatic` 静态创建，控制结构体与缓冲区均位于 PSRAM
 - deinit 时先 `vQueueDelete` 销毁队列，再 `heap_caps_free` 释放 PSRAM 缓冲区
 
-**存储选择优先级**: SD 卡（启用时）> SPIFFS。SD 卡挂载失败时自动回退到 SPIFFS。
+**存储选择优先级**: SD 卡（启用时）> LittleFS。SD 卡挂载失败时自动回退到 LittleFS。
+
+**LittleFS 分区要求**:
+- 分区表需包含一个 `data, spiffs` 类型的分区（LittleFS 复用 spiffs 子类型，这是 joltwallet/littlefs 组件的标准要求）
+- 分区名建议为 `littlefs`，并确保 `BLE_SRV_LOG_LITTLEFS_PARTITION` 配置与分区名一致
+- LittleFS 支持真实目录层级，挂载时会自动创建日志目录
 
 **HTTP 服务器**: 启用后可通过浏览器访问 `http://<设备IP>:8080/` 浏览和下载日志文件。需要启用 `CONFIG_HTTPD_URI_MATCH_WILDCARD=y` 以支持通配符路由。
 
@@ -425,6 +431,7 @@ CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE=256
 - `fatfs` — FAT 文件系统（SD 卡支持）
 - `esp_driver_sdmmc` — SDMMC 驱动（SD 卡支持）
 - `esp_http_server` — HTTP 服务器
+- `littlefs` — LittleFS 文件系统组件（`joltwallet/littlefs`）
 
 ### menuconfig 菜单层级树
 
@@ -466,7 +473,8 @@ Component config
     │   [ ] Enable Log System                              (BLE_SRV_LOG_ENABLED)
     │       [ ] Enable SD Card Support                     (BLE_SRV_LOG_SD_ENABLED)
     │           (/sdcard) SD Card Mount Path               (BLE_SRV_LOG_SD_PATH)
-    │       (/spiffs) SPIFFS Mount Path                    (BLE_SRV_LOG_SPIFFS_PATH)
+    │       (/littlefs) LittleFS Mount Path                (BLE_SRV_LOG_LITTLEFS_PATH)
+    │       (littlefs)  LittleFS Partition Label            (BLE_SRV_LOG_LITTLEFS_PARTITION)
     │       (/log) Log Directory Name                      (BLE_SRV_LOG_DIR)
     │       (1024) Log Queue Size (entries)                (BLE_SRV_LOG_QUEUE_SIZE)
     │       (512) Maximum Log Line Size (bytes)            (BLE_SRV_LOG_LINE_SIZE)
@@ -556,9 +564,9 @@ CONFIG_BLE_SRV_AUTH_PIN="123456"
 CONFIG_BLE_SRV_LED_ENABLED=y
 # CONFIG_BLE_SRV_LED_GPIO 默认按芯片型号选择
 
-# 日志系统（使用 SPIFFS）
+# 日志系统（使用 LittleFS）
 CONFIG_BLE_SRV_LOG_ENABLED=y
-CONFIG_BLE_SRV_LOG_SPIFFS_PATH="/spiffs"
+CONFIG_BLE_SRV_LOG_LITTLEFS_PATH="/littlefs"
 CONFIG_BLE_SRV_LOG_DIR="/log"
 CONFIG_BLE_SRV_LOG_QUEUE_SIZE=1024
 CONFIG_BLE_SRV_LOG_LINE_SIZE=512
@@ -602,7 +610,7 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_BLE_SRV_LOG_ENABLED=y
 CONFIG_BLE_SRV_LOG_SD_ENABLED=y
 CONFIG_BLE_SRV_LOG_SD_PATH="/sdcard"
-CONFIG_BLE_SRV_LOG_SPIFFS_PATH="/spiffs"
+CONFIG_BLE_SRV_LOG_LITTLEFS_PATH="/littlefs"
 CONFIG_BLE_SRV_LOG_DIR="/log"
 CONFIG_BLE_SRV_LOG_QUEUE_SIZE=2048       # 加大队列容量
 CONFIG_BLE_SRV_LOG_LINE_SIZE=512

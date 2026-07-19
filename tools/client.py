@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ESP32 BLE Device Manager CLI - 命令行工具 v1.2.1
+ESP32 BLE Device Manager CLI - 命令行工具 v2.0.1
 
 使用方法:
   python tools/client.py scan [--timeout 5]
@@ -77,7 +77,7 @@ ESP32 BLE Device Manager CLI - 命令行工具 v1.2.1
   python tools/client.py -d BLE-SRV led-effect --effect breath --speed 80
 """
 
-__version__ = "1.3.1"
+__version__ = "2.0.1"
 
 import asyncio
 import argparse

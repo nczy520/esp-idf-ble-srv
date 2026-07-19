@@ -188,7 +188,7 @@ menu "BLE Service"
             bool "Enable Log System"
             default n
             help
-                Enable log system that stores logs to SPIFFS or SD card.
+                Enable log system that stores logs to LittleFS or SD card.
                 Logs can be browsed and downloaded via HTTP server or BLE.
 
         config BLE_SRV_LOG_SD_ENABLED
@@ -206,12 +206,21 @@ menu "BLE Service"
             help
                 Mount path for SD card storage.
 
-        config BLE_SRV_LOG_SPIFFS_PATH
-            string "SPIFFS Mount Path"
-            default "/spiffs"
+        config BLE_SRV_LOG_LITTLEFS_PATH
+            string "LittleFS Mount Path"
+            default "/littlefs"
             depends on BLE_SRV_LOG_ENABLED
             help
-                Mount path for SPIFFS storage.
+                Mount path for LittleFS storage.
+
+        config BLE_SRV_LOG_LITTLEFS_PARTITION
+            string "LittleFS Partition Label"
+            default "littlefs"
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Partition label in partitions.csv for LittleFS storage.
+                LittleFS component (joltwallet/littlefs) uses ESP_PARTITION_SUBTYPE_DATA_SPIFFS
+                to find the partition, so the partition must have subtype 'spiffs'.
 
         config BLE_SRV_LOG_DIR
             string "Log Directory Name"

@@ -11,7 +11,7 @@
 #include <dirent.h>
 #include <time.h>
 #include "esp_log.h"
-#include "esp_spiffs.h"
+#include "esp_littlefs.h"
 #include "esp_vfs.h"
 #include "esp_vfs_fat.h"
 #include "esp_timer.h"
@@ -96,10 +96,10 @@ static int ble_srv_log_format_timestamp(char *buf, int buf_len)
 
 static bool ble_srv_log_check_free_space(void)
 {
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
-    if (s_storage == BLE_SRV_LOG_STORAGE_SPIFFS) {
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
+    if (s_storage == BLE_SRV_LOG_STORAGE_LITTLEFS) {
         size_t total = 0, used = 0;
-        if (esp_spiffs_info(NULL, &total, &used) == ESP_OK) {
+        if (esp_littlefs_info(BLE_SRV_LOG_LITTLEFS_PARTITION, &total, &used) == ESP_OK) {
             size_t free_space = total - used;
             return free_space >= BLE_SRV_LOG_MIN_FREE_SPACE;
         }
@@ -125,7 +125,7 @@ static bool ble_srv_log_is_valid_log_file(const char *filename)
 
 static void ble_srv_log_cleanup_old_files(void)
 {
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char log_dir[64];
     snprintf(log_dir, sizeof(log_dir), "%s%s", base_path, BLE_SRV_LOG_DIR);
 
@@ -208,31 +208,40 @@ static void ble_srv_log_cleanup_old_files(void)
     }
 }
 
-static bool ble_srv_log_mount_spiffs(void)
+static bool ble_srv_log_mount_littlefs(void)
 {
-    ESP_LOGI(TAG, "Mounting SPIFFS...");
-    esp_vfs_spiffs_conf_t conf = {
-        .base_path = BLE_SRV_LOG_SPIFFS_PATH,
-        .partition_label = NULL,
-        .max_files = 8,
+    ESP_LOGI(TAG, "Mounting LittleFS...");
+    esp_vfs_littlefs_conf_t conf = {
+        .base_path = BLE_SRV_LOG_LITTLEFS_PATH,
+        .partition_label = BLE_SRV_LOG_LITTLEFS_PARTITION,
         .format_if_mount_failed = true,
+        .dont_mount = false,
     };
-    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+    esp_err_t ret = esp_vfs_littlefs_register(&conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount SPIFFS: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to mount LittleFS: %s", esp_err_to_name(ret));
         return false;
     }
 
     size_t total = 0, used = 0;
-    ret = esp_spiffs_info(NULL, &total, &used);
+    ret = esp_littlefs_info(BLE_SRV_LOG_LITTLEFS_PARTITION, &total, &used);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get SPIFFS info: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to get LittleFS info: %s", esp_err_to_name(ret));
         return false;
     }
-    ESP_LOGI(TAG, "SPIFFS mounted: total=%d, used=%d", (int)total, (int)used);
+    ESP_LOGI(TAG, "LittleFS mounted: total=%d, used=%d", (int)total, (int)used);
 
-    /* SPIFFS is a flat filesystem - no directory creation needed.
-       Files with path prefixes like /spiffs/log/xxx.txt work natively. */
+    /* LittleFS supports real directories - create log directory explicitly. */
+    char log_dir[64];
+    snprintf(log_dir, sizeof(log_dir), "%s%s", BLE_SRV_LOG_LITTLEFS_PATH, BLE_SRV_LOG_DIR);
+    struct stat st;
+    if (stat(log_dir, &st) != 0) {
+        ESP_LOGI(TAG, "Creating log directory: %s", log_dir);
+        if (mkdir(log_dir, 0755) != 0) {
+            ESP_LOGE(TAG, "Failed to create log directory");
+            return false;
+        }
+    }
 
     return true;
 }
@@ -327,8 +336,8 @@ static bool ble_srv_log_open_new_file(void)
     ble_srv_log_close_file();
     ble_srv_log_cleanup_old_files();
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
-    
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
+
     char filename[64];
     uint32_t file_num = ble_srv_log_get_next_file_number();
     snprintf(filename, sizeof(filename), "%06lu.log", (unsigned long)file_num);
@@ -388,9 +397,9 @@ bool ble_srv_log_init(void)
     if (ble_srv_log_mount_sd()) {
         s_storage = BLE_SRV_LOG_STORAGE_SD;
         ESP_LOGI(TAG, "Storage: SD card");
-    } else if (ble_srv_log_mount_spiffs()) {
-        s_storage = BLE_SRV_LOG_STORAGE_SPIFFS;
-        ESP_LOGI(TAG, "Storage: SPIFFS");
+    } else if (ble_srv_log_mount_littlefs()) {
+        s_storage = BLE_SRV_LOG_STORAGE_LITTLEFS;
+        ESP_LOGI(TAG, "Storage: LittleFS");
     } else {
         s_storage = BLE_SRV_LOG_STORAGE_NONE;
         ESP_LOGW(TAG, "No storage available, log disabled");
@@ -449,8 +458,8 @@ void ble_srv_log_deinit(void)
     ble_srv_log_close_file();
     LOG_UNLOCK();
 
-    if (s_storage == BLE_SRV_LOG_STORAGE_SPIFFS) {
-        esp_vfs_spiffs_unregister(NULL);
+    if (s_storage == BLE_SRV_LOG_STORAGE_LITTLEFS) {
+        esp_vfs_littlefs_unregister(BLE_SRV_LOG_LITTLEFS_PARTITION);
     } else if (s_storage == BLE_SRV_LOG_STORAGE_SD) {
 #ifdef CONFIG_BLE_SRV_LOG_SD_ENABLED
         esp_vfs_unregister(BLE_SRV_LOG_SD_PATH);
@@ -584,7 +593,7 @@ int ble_srv_log_get_file_list(ble_srv_log_file_info_t *files, int max_count)
 
     LOG_LOCK();
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char log_dir[64];
     snprintf(log_dir, sizeof(log_dir), "%s%s", base_path, BLE_SRV_LOG_DIR);
 
@@ -639,7 +648,7 @@ int ble_srv_log_read_file(const char *filename, char *buffer, int max_len)
 
     LOG_LOCK();
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char *filepath = heap_caps_malloc(256, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!filepath) filepath = heap_caps_malloc(256, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!filepath) {
@@ -679,7 +688,7 @@ int ble_srv_log_read_file_lines(const char *filename, int max_lines, char *buffe
 
     LOG_LOCK();
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char filepath[256];
     snprintf(filepath, sizeof(filepath), "%s%s/%s", base_path, BLE_SRV_LOG_DIR, filename);
 
@@ -742,7 +751,7 @@ bool ble_srv_log_delete_file(const char *filename)
 
     LOG_LOCK();
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char filepath[256];
     snprintf(filepath, sizeof(filepath), "%s%s/%s", base_path, BLE_SRV_LOG_DIR, filename);
 
@@ -767,11 +776,11 @@ bool ble_srv_log_get_storage_info(ble_srv_log_storage_info_t *info)
 
     info->storage_type = (uint8_t)s_storage;
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
 
-    if (s_storage == BLE_SRV_LOG_STORAGE_SPIFFS) {
+    if (s_storage == BLE_SRV_LOG_STORAGE_LITTLEFS) {
         size_t total = 0, used = 0;
-        if (esp_spiffs_info(NULL, &total, &used) == ESP_OK) {
+        if (esp_littlefs_info(BLE_SRV_LOG_LITTLEFS_PARTITION, &total, &used) == ESP_OK) {
             info->total_size = (uint32_t)total;
             info->used_size = (uint32_t)used;
             info->free_size = (uint32_t)(total - used);
@@ -830,8 +839,8 @@ static esp_err_t log_http_index_handler(httpd_req_t *req)
 
     LOG_LOCK();
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
-    const char *storage_name = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? "SD Card" : "SPIFFS";
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
+    const char *storage_name = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? "SD Card" : "LittleFS";
     char log_dir[64];
     snprintf(log_dir, sizeof(log_dir), "%s%s", base_path, BLE_SRV_LOG_DIR);
 
@@ -844,9 +853,9 @@ static esp_err_t log_http_index_handler(httpd_req_t *req)
     }
 
     size_t total_space = 0, used_space = 0, free_space = 0;
-    if (s_storage == BLE_SRV_LOG_STORAGE_SPIFFS) {
+    if (s_storage == BLE_SRV_LOG_STORAGE_LITTLEFS) {
         size_t total = 0, used = 0;
-        if (esp_spiffs_info(NULL, &total, &used) == ESP_OK) {
+        if (esp_littlefs_info(BLE_SRV_LOG_LITTLEFS_PARTITION, &total, &used) == ESP_OK) {
             total_space = total;
             used_space = used;
             free_space = total - used;
@@ -1103,7 +1112,7 @@ static esp_err_t log_http_file_handler(httpd_req_t *req)
 
     LOG_LOCK();
 
-    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_SPIFFS_PATH;
+    const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char filepath[384];
     snprintf(filepath, sizeof(filepath), "%s%s/%s", base_path, BLE_SRV_LOG_DIR, filename);
 

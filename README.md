@@ -3,12 +3,12 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Version](https://img.shields.io/badge/version-1.3.1-blueviolet)](ble_srv/idf_component.yml)
+[![Version](https://img.shields.io/badge/version-2.0.1-blueviolet)](ble_srv/idf_component.yml)
 
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 1.3.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 2.0.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
@@ -41,10 +41,10 @@ dependencies:
   ble_srv:
     git: https://github.com/your-org/esp-idf-ble-srv.git
     path: ble_srv
-    version: v1.3.1   # 可选：指定 tag、分支或 commit hash
+    version: v2.0.1   # 可选：指定 tag、分支或 commit hash
 ```
 
-> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v1.3.1`）以保证版本可追溯。
+> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v2.0.1`）以保证版本可追溯。
 
 配置完成后执行：
 
@@ -57,7 +57,7 @@ ESP-IDF 组件管理器会自动从 GitHub 克隆并引入 `ble_srv` 组件。
 #### 方式二：通过 ESP-IDF 组件管理器引入
 
 ```bash
-idf.py add-dependency "ble_srv^1.3.1"
+idf.py add-dependency "ble_srv^2.0.1"
 ```
 
 该命令会自动将依赖添加到 `idf_component.yml` 中，并从 ESP-IDF 组件仓库下载。
@@ -267,8 +267,8 @@ docs/
   PYTHON_CLI.md            # CLI客户端详细使用说明
   PYTHON_GUI.md            # GUI客户端详细使用说明
 tools/
-  client.py                # Python BLE 命令行客户端 v1.3.1
-  client_gui.py            # Python BLE GUI 客户端入口 v1.3.1
+  client.py                # Python BLE 命令行客户端 v2.0.1
+  client_gui.py            # Python BLE GUI 客户端入口 v2.0.1
   client/                  # CLI客户端核心模块
   client_gui/              # GUI客户端模块
 examples/
@@ -310,6 +310,35 @@ examples/
 - flet >= 0.20.0（GUI库，仅GUI客户端需要）
 
 ## 变更记录
+
+### v2.0.1 (2026-07-19)
+
+**重大变更 (C 固件)**:
+- **文件系统迁移**: 日志系统存储后端从 SPIFFS 切换到 LittleFS（`joltwallet/littlefs` 组件）
+  - `ble_srv_log.c`: 替换 `esp_spiffs_*` API 为 `esp_littlefs_*` API
+  - `ble_srv_log.h`: `BLE_SRV_LOG_STORAGE_SPIFFS` 枚举重命名为 `BLE_SRV_LOG_STORAGE_LITTLEFS`
+  - `Kconfig`: `BLE_SRV_LOG_SPIFFS_PATH` 配置项重命名为 `BLE_SRV_LOG_LITTLEFS_PATH`，默认值 `/spiffs` → `/littlefs`；新增 `BLE_SRV_LOG_LITTLEFS_PARTITION` 配置项，默认分区标签 `littlefs`
+  - `CMakeLists.txt`: 依赖 `spiffs` 替换为 `littlefs`
+  - `idf_component.yml`: 新增 `joltwallet/littlefs` 依赖
+  - LittleFS 支持真实目录层级，挂载时自动创建日志目录（不再依赖 SPIFFS 的扁平文件系统）
+
+**客户端同步 (Python)**:
+- `tools/client/models.py`: `STORAGE_TYPE_SPIFFS` 重命名为 `STORAGE_TYPE_LITTLEFS`，显示名从 "SPIFFS" 改为 "LittleFS"
+
+**示例项目**:
+- `examples/basic/sdkconfig`: 替换 SPIFFS 配置段为 LittleFS 配置段，路径从 `/spiffs` 改为 `/littlefs`；新增 `BLE_SRV_LOG_LITTLEFS_PARTITION` 配置项
+- `examples/basic/partitions.csv`: 分区名从 `spiffs` 改为 `littlefs`（subtype 仍为 `spiffs`，joltwallet/littlefs 要求）
+- `examples/basic/CMakeLists.txt`: 项目版本号 1.3.1 → 2.0.1
+
+**文档更新**:
+- `docs/BLE_SRV_MODULE.md`: 更新日志系统配置章节，新增 LittleFS 分区要求说明
+- `docs/PYTHON_CLI.md` / `docs/PYTHON_GUI.md`: 版本号同步更新
+- `README.md`: 版本号同步更新，新增 v2.0.1 变更记录
+
+> ⚠️ **不兼容升级说明**: 由于 Kconfig 配置项名变更（`BLE_SRV_LOG_SPIFFS_PATH` → `BLE_SRV_LOG_LITTLEFS_PATH`）和枚举名变更，从 v1.3.1 升级到 v2.0.1 时需要：
+> 1. 删除 `sdkconfig` 后执行 `idf.py reconfigure` 重新生成配置
+> 2. 检查 `sdkconfig.defaults` 中是否引用了旧配置项名
+> 3. 擦除 Flash 中的 spiffs 分区（`idf.py erase-flash`）后重新烧录，避免文件系统格式不兼容
 
 ### v1.3.1 (2026-07-15)
 
