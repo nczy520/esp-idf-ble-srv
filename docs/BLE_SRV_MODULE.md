@@ -279,25 +279,50 @@ Partition Table → Partition Table → Factory app, two OTA definitions
 
 ### URL OTA 配置
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `BLE_SRV_OTA_URL_ENABLED` | bool | n | 启用 URL OTA（依赖 WiFi） |
-| `BLE_SRV_OTA_URL_DEFAULT` | string | "" | 默认固件 URL |
-| `BLE_SRV_OTA_URL_SKIP_CERT_CHECK` | bool | n | 跳过 HTTPS 证书验证（仅测试用） |
+URL OTA 依赖 WiFi 模块（`BLE_SRV_WIFI_ENABLED` 必须先启用）。启用后可通过 BLE 写入 URL 或使用默认 URL 从 HTTPS 服务器下载固件。
 
-**安全警告**: `BLE_SRV_OTA_URL_SKIP_CERT_CHECK` 会禁用所有服务器身份验证，仅用于自签名证书测试，生产环境禁止启用。
+| 配置项 | 类型 | 默认值 | 依赖 | 说明 |
+|--------|------|--------|------|------|
+| `BLE_SRV_OTA_URL_ENABLED` | bool | n | `BLE_SRV_WIFI_ENABLED` | 启用 URL OTA |
+| `BLE_SRV_OTA_URL_DEFAULT` | string | "" | `BLE_SRV_OTA_URL_ENABLED` | 默认固件 URL（可被运行时 BLE 命令覆盖） |
+| `BLE_SRV_OTA_URL_SKIP_CERT_CHECK` | bool | n | `BLE_SRV_OTA_URL_ENABLED` | 跳过 HTTPS 证书 CN/SAN/SNI 验证 |
+| `BLE_SRV_OTA_URL_ALLOW_DOWNGRADE` | bool | n | `BLE_SRV_OTA_URL_ENABLED` | 允许降级到旧版本固件 |
+
+**配置示例**:
+```
+CONFIG_BLE_SRV_WIFI_ENABLED=y
+CONFIG_BLE_SRV_OTA_URL_ENABLED=y
+CONFIG_BLE_SRV_OTA_URL_DEFAULT="https://example.com/firmware.bin"
+CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK=n
+CONFIG_BLE_SRV_OTA_URL_ALLOW_DOWNGRADE=n
+```
+
+**安全警告**:
+- `BLE_SRV_OTA_URL_SKIP_CERT_CHECK=y` 会禁用所有服务器身份验证（CN/SAN/SNI），仅用于自签名证书测试环境，**生产环境禁止启用**，否则易遭受中间人攻击。
+- `BLE_SRV_OTA_URL_ALLOW_DOWNGRADE=y` 允许刷入比当前版本更旧的固件，默认关闭以防止版本回退攻击。仅在需要回滚到旧版本时启用。
+
+**版本检查规则**: 远程版本 > 本地版本 → 下载；远程版本 == 本地版本 → 返回 `BLE_OTA_ERR_VERSION_SAME (0x0C)`；远程版本 < 本地版本 → 返回 `BLE_OTA_ERR_VERSION_DOWNGRADE (0x0B)`（除非启用 `ALLOW_DOWNGRADE`）。
 
 ### 认证配置
 
+应用层 PIN 认证（独立于 BLE 安全配对）。启用后客户端必须在 GATT 操作前通过 `0xFFE8` 特征写入正确密码。
+
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `BLE_SRV_AUTH_ENABLED` | bool | n | 启用应用层认证 |
-| `BLE_SRV_AUTH_PIN` | string | "112233" | 认证密码（最大16字节） |
+| `BLE_SRV_AUTH_ENABLED` | bool | n | 启用应用层 PIN 认证 |
+| `BLE_SRV_AUTH_PIN` | string | "123456" | 默认 PIN 码（1-16 字节，运行时可改） |
 
 **认证流程**:
 1. 客户端连接后向 `0xFFE8` 特征写入密码
 2. 设备验证密码，失败则发送 `0x00` 通知并断开连接
 3. 认证成功后解锁其他 GATT 特征操作
+
+**PIN 码约束**:
+- 长度 1-16 字节
+- 不局限于数字，可为任意 ASCII 字符
+- 修改后立即生效，断电后丢失（除非运行时持久化到 NVS）
+
+> ⚠️ 应用层认证与 BLE 链路层配对（`sm_sc=1`）是两套独立机制。本组件默认启用 LE Secure Connections 配对以兼容 Windows 10/11，应用层 PIN 用于额外控制 GATT 访问权限。
 
 ### WiFi 配置
 
@@ -332,11 +357,272 @@ Partition Table → Partition Table → Factory app, two OTA definitions
 
 ### 温度传感器配置
 
+内置温度传感器读取（仅支持 ESP32-S2/S3/C3/C5/C6/C61/H2/P4，ESP32 无内置温度传感器）。温度数据整合到设备信息结构体中。
+
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `BLE_SRV_TEMP_SENSOR_ENABLED` | bool | y | 启用内置温度传感器 |
 | `BLE_SRV_TEMP_SENSOR_RANGE_MIN` | int | -10 | 温度测量下限（°C） |
 | `BLE_SRV_TEMP_SENSOR_RANGE_MAX` | int | 80 | 温度测量上限（°C） |
+
+**配置示例**:
+```
+CONFIG_BLE_SRV_TEMP_SENSOR_ENABLED=y
+CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MIN=-10
+CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MAX=80
+```
+
+### 日志系统配置
+
+日志系统支持将运行日志存储到 SPIFFS 或 SD 卡，并提供 HTTP 服务器接口用于浏览和下载日志文件。日志队列使用 PSRAM 静态分配，支持 512KB 总容量。
+
+| 配置项 | 类型 | 默认值 | 依赖 | 说明 |
+|--------|------|--------|------|------|
+| `BLE_SRV_LOG_ENABLED` | bool | n | - | 启用日志系统 |
+| `BLE_SRV_LOG_SD_ENABLED` | bool | n | `BLE_SRV_LOG_ENABLED` | 启用 SD 卡存储支持（优先于 SPIFFS） |
+| `BLE_SRV_LOG_SD_PATH` | string | "/sdcard" | `BLE_SRV_LOG_SD_ENABLED` | SD 卡挂载路径 |
+| `BLE_SRV_LOG_SPIFFS_PATH` | string | "/spiffs" | `BLE_SRV_LOG_ENABLED` | SPIFFS 挂载路径 |
+| `BLE_SRV_LOG_DIR` | string | "/log" | `BLE_SRV_LOG_ENABLED` | 日志目录名（位于存储路径下） |
+| `BLE_SRV_LOG_QUEUE_SIZE` | int | 1024 | `BLE_SRV_LOG_ENABLED` | 日志队列容量（条目数，PSRAM 分配） |
+| `BLE_SRV_LOG_LINE_SIZE` | int | 512 | `BLE_SRV_LOG_ENABLED` | 单条日志最大长度（字节） |
+| `BLE_SRV_LOG_FLUSH_INTERVAL_MS` | int | 1000 | `BLE_SRV_LOG_ENABLED` | 周期刷盘间隔（ms） |
+| `BLE_SRV_LOG_MAX_FILES` | int | 50 | `BLE_SRV_LOG_ENABLED` | 最大日志文件保留数 |
+| `BLE_SRV_LOG_MIN_FREE_SPACE` | int | 256 | `BLE_SRV_LOG_ENABLED` | 最小可用空间（KB） |
+| `BLE_SRV_LOG_MAX_FILE_SIZE` | int | 512 | `BLE_SRV_LOG_ENABLED` | 单个日志文件最大大小（KB） |
+| `BLE_SRV_LOG_HTTP_PORT` | int | 8080 | `BLE_SRV_LOG_ENABLED` | 日志 HTTP 服务器端口 |
+
+**配置示例**:
+```
+# 基础日志系统（使用 SPIFFS）
+CONFIG_BLE_SRV_LOG_ENABLED=y
+CONFIG_BLE_SRV_LOG_SPIFFS_PATH="/spiffs"
+CONFIG_BLE_SRV_LOG_DIR="/log"
+CONFIG_BLE_SRV_LOG_QUEUE_SIZE=1024
+CONFIG_BLE_SRV_LOG_LINE_SIZE=512
+CONFIG_BLE_SRV_LOG_FLUSH_INTERVAL_MS=1000
+CONFIG_BLE_SRV_LOG_MAX_FILES=50
+CONFIG_BLE_SRV_LOG_MAX_FILE_SIZE=512
+CONFIG_BLE_SRV_LOG_HTTP_PORT=8080
+
+# 启用 SD 卡支持（需在 SPIFFS 之外额外启用）
+CONFIG_BLE_SRV_LOG_SD_ENABLED=y
+CONFIG_BLE_SRV_LOG_SD_PATH="/sdcard"
+CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE=256
+```
+
+**内存使用说明**:
+- 日志队列总内存 = `BLE_SRV_LOG_QUEUE_SIZE` × `BLE_SRV_LOG_LINE_SIZE`，默认 1024 × 512 = **512KB**
+- 队列缓冲区使用 `heap_caps_malloc(MALLOC_CAP_SPIRAM)` 从 PSRAM 分配，避免占用内部 RAM
+- 队列使用 `xQueueCreateStatic` 静态创建，控制结构体与缓冲区均位于 PSRAM
+- deinit 时先 `vQueueDelete` 销毁队列，再 `heap_caps_free` 释放 PSRAM 缓冲区
+
+**存储选择优先级**: SD 卡（启用时）> SPIFFS。SD 卡挂载失败时自动回退到 SPIFFS。
+
+**HTTP 服务器**: 启用后可通过浏览器访问 `http://<设备IP>:8080/` 浏览和下载日志文件。需要启用 `CONFIG_HTTPD_URI_MATCH_WILDCARD=y` 以支持通配符路由。
+
+**依赖组件**: 启用日志系统时，`ble_srv/CMakeLists.txt` 中已声明以下组件依赖（无需用户手动添加）：
+- `vfs` — 虚拟文件系统
+- `fatfs` — FAT 文件系统（SD 卡支持）
+- `esp_driver_sdmmc` — SDMMC 驱动（SD 卡支持）
+- `esp_http_server` — HTTP 服务器
+
+### menuconfig 菜单层级树
+
+通过 `idf.py menuconfig` 进入 `Component config → BLE Service` 即可看到以下菜单结构（仅当对应依赖启用时显示子项）：
+
+```
+Component config
+└── BLE Service
+    [*] Enable BLE Service                                  (BLE_SRV_ENABLED)
+    ├── Advertising
+    │       (BLE-SRV) Device Name Prefix                   (BLE_SRV_ADV_NAME_PREFIX)
+    │       (32) Advertising Interval Min (ms)             (BLE_SRV_ADV_INTERVAL_MIN)
+    │       (64) Advertising Interval Max (ms)             (BLE_SRV_ADV_INTERVAL_MAX)
+    ├── OTA Bluetooth
+    │   [*] Enable Bluetooth OTA                           (BLE_SRV_OTA_BT_ENABLED)
+    │       (10) Progress Notify Interval (writes)         (BLE_SRV_OTA_BT_NOTIFY_INTERVAL)
+    ├── OTA URL                                            (依赖 BLE_SRV_WIFI_ENABLED)
+    │   [ ] Enable URL OTA                                 (BLE_SRV_OTA_URL_ENABLED)
+    │       ()  Default Firmware URL                       (BLE_SRV_OTA_URL_DEFAULT)
+    │       [ ] Skip Certificate Common Name Check         (BLE_SRV_OTA_URL_SKIP_CERT_CHECK)
+    │       [ ] Allow Firmware Downgrade                   (BLE_SRV_OTA_URL_ALLOW_DOWNGRADE)
+    ├── WiFi
+    │   [ ] Enable WiFi Provisioner                        (BLE_SRV_WIFI_ENABLED)
+    ├── NTP                                                (依赖 BLE_SRV_WIFI_ENABLED)
+    │   [ ] Enable NTP Time Sync                           (BLE_SRV_NTP_ENABLED)
+    │       (CST-8) Timezone                               (BLE_SRV_NTP_TIMEZONE)
+    │       (ntp.aliyun.com)     NTP Server 1              (BLE_SRV_NTP_SERVER_1)
+    │       (time1.aliyun.com)   NTP Server 2              (BLE_SRV_NTP_SERVER_2)
+    │       (cn.ntp.org.cn)      NTP Server 3              (BLE_SRV_NTP_SERVER_3)
+    │       (time.windows.com)   NTP Server 4              (BLE_SRV_NTP_SERVER_4)
+    │       (pool.ntp.org)       NTP Server 5              (BLE_SRV_NTP_SERVER_5)
+    ├── Authentication
+    │   [ ] Enable PIN Authentication                      (BLE_SRV_AUTH_ENABLED)
+    │       (123456) Default PIN Code                      (BLE_SRV_AUTH_PIN)
+    ├── LED
+    │   [ ] Enable WS2812 LED Control                      (BLE_SRV_LED_ENABLED)
+    │       (21) WS2812 LED GPIO Pin                       (BLE_SRV_LED_GPIO)
+    ├── Log System
+    │   [ ] Enable Log System                              (BLE_SRV_LOG_ENABLED)
+    │       [ ] Enable SD Card Support                     (BLE_SRV_LOG_SD_ENABLED)
+    │           (/sdcard) SD Card Mount Path               (BLE_SRV_LOG_SD_PATH)
+    │       (/spiffs) SPIFFS Mount Path                    (BLE_SRV_LOG_SPIFFS_PATH)
+    │       (/log) Log Directory Name                      (BLE_SRV_LOG_DIR)
+    │       (1024) Log Queue Size (entries)                (BLE_SRV_LOG_QUEUE_SIZE)
+    │       (512) Maximum Log Line Size (bytes)            (BLE_SRV_LOG_LINE_SIZE)
+    │       (1000) Flush Interval (ms)                     (BLE_SRV_LOG_FLUSH_INTERVAL_MS)
+    │       (50) Maximum Log Files                         (BLE_SRV_LOG_MAX_FILES)
+    │       (256) Minimum Free Space (KB)                  (BLE_SRV_LOG_MIN_FREE_SPACE)
+    │       (512) Maximum Log File Size (KB)               (BLE_SRV_LOG_MAX_FILE_SIZE)
+    │       (8080) HTTP Server Port                        (BLE_SRV_LOG_HTTP_PORT)
+    └── Temperature Sensor
+        [*] Enable Temperature Sensor                      (BLE_SRV_TEMP_SENSOR_ENABLED)
+            (-10) Temperature Range Min (°C)               (BLE_SRV_TEMP_SENSOR_RANGE_MIN)
+            (80)  Temperature Range Max (°C)               (BLE_SRV_TEMP_SENSOR_RANGE_MAX)
+```
+
+### 依赖关系图
+
+各功能模块存在以下编译期依赖关系，禁用底层模块时上层模块将自动隐藏：
+
+```
+BLE_SRV_ENABLED (顶层开关)
+├── Advertising                  (无依赖)
+├── OTA Bluetooth                (无依赖)
+├── WiFi                         (无依赖)
+│   ├── OTA URL                  (依赖 WiFi)
+│   └── NTP                      (依赖 WiFi)
+├── Authentication               (无依赖)
+├── LED                          (无依赖)
+├── Log System                   (无依赖)
+│   └── Log System SD Card       (依赖 Log System)
+└── Temperature Sensor           (无依赖)
+```
+
+### 功能与 GATT 服务映射
+
+下表展示 menuconfig 选项启用的功能与对应 GATT 服务的映射关系：
+
+| 功能选项 | GATT 服务 UUID | 服务名称 |
+|----------|---------------|----------|
+| `BLE_SRV_ENABLED` | 0xFFE0 | Device Service（设备信息、重启、认证、日志、自定义命令） |
+| `BLE_SRV_OTA_BT_ENABLED` 或 `BLE_SRV_OTA_URL_ENABLED` | 0xFFD0 | OTA Service（固件升级） |
+| `BLE_SRV_WIFI_ENABLED` | 0xFFC0 | WiFi Service（WiFi 配网） |
+| `BLE_SRV_LED_ENABLED` | 0xFFB0 | LED Service（LED 控制） |
+
+> 说明：OTA Service 在蓝牙 OTA 或 URL OTA 任一启用时即注册；URL OTA 命令特征 `0xFFD4` 仅在 `BLE_SRV_OTA_URL_ENABLED=y` 时有效。
+
+### 典型配置示例
+
+#### 示例 1：最小化配置（仅 BLE 设备信息 + 蓝牙 OTA）
+
+```
+CONFIG_BLE_SRV_ENABLED=y
+CONFIG_BLE_SRV_ADV_NAME_PREFIX="BLE-SRV"
+CONFIG_BLE_SRV_OTA_BT_ENABLED=y
+CONFIG_BLE_SRV_OTA_BT_NOTIFY_INTERVAL=10
+CONFIG_BLE_SRV_TEMP_SENSOR_ENABLED=y
+```
+
+适用场景：资源受限芯片（如 ESP32-C3 4MB Flash），仅需基础设备信息查询和蓝牙 OTA 升级。
+
+#### 示例 2：完整功能配置（推荐用于 ESP32-S3）
+
+```
+# 基础
+CONFIG_BLE_SRV_ENABLED=y
+CONFIG_BLE_SRV_ADV_NAME_PREFIX="BLE-SRV"
+CONFIG_BLE_SRV_ADV_INTERVAL_MIN=32
+CONFIG_BLE_SRV_ADV_INTERVAL_MAX=64
+
+# 蓝牙 OTA
+CONFIG_BLE_SRV_OTA_BT_ENABLED=y
+CONFIG_BLE_SRV_OTA_BT_NOTIFY_INTERVAL=10
+
+# WiFi + URL OTA + NTP
+CONFIG_BLE_SRV_WIFI_ENABLED=y
+CONFIG_BLE_SRV_OTA_URL_ENABLED=y
+CONFIG_BLE_SRV_OTA_URL_DEFAULT=""
+CONFIG_BLE_SRV_OTA_URL_SKIP_CERT_CHECK=n
+CONFIG_BLE_SRV_OTA_URL_ALLOW_DOWNGRADE=n
+CONFIG_BLE_SRV_NTP_ENABLED=y
+CONFIG_BLE_SRV_NTP_TIMEZONE="CST-8"
+
+# 应用层认证
+CONFIG_BLE_SRV_AUTH_ENABLED=y
+CONFIG_BLE_SRV_AUTH_PIN="123456"
+
+# LED 控制
+CONFIG_BLE_SRV_LED_ENABLED=y
+# CONFIG_BLE_SRV_LED_GPIO 默认按芯片型号选择
+
+# 日志系统（使用 SPIFFS）
+CONFIG_BLE_SRV_LOG_ENABLED=y
+CONFIG_BLE_SRV_LOG_SPIFFS_PATH="/spiffs"
+CONFIG_BLE_SRV_LOG_DIR="/log"
+CONFIG_BLE_SRV_LOG_QUEUE_SIZE=1024
+CONFIG_BLE_SRV_LOG_LINE_SIZE=512
+CONFIG_BLE_SRV_LOG_HTTP_PORT=8080
+
+# 温度传感器
+CONFIG_BLE_SRV_TEMP_SENSOR_ENABLED=y
+```
+
+配套的系统级配置（必须）：
+```
+# NimBLE
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_MAX_BONDS=0
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512
+
+# PSRAM（日志队列和 NimBLE 内存池需要）
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# 双 OTA 分区表
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# HTTPD 通配符路由（日志 HTTP 服务器需要）
+CONFIG_HTTPD_URI_MATCH_WILDCARD=y
+
+# HTTPS 证书包（URL OTA 需要）
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+```
+
+#### 示例 3：带 SD 卡日志的生产环境配置
+
+```
+# 日志系统 + SD 卡
+CONFIG_BLE_SRV_LOG_ENABLED=y
+CONFIG_BLE_SRV_LOG_SD_ENABLED=y
+CONFIG_BLE_SRV_LOG_SD_PATH="/sdcard"
+CONFIG_BLE_SRV_LOG_SPIFFS_PATH="/spiffs"
+CONFIG_BLE_SRV_LOG_DIR="/log"
+CONFIG_BLE_SRV_LOG_QUEUE_SIZE=2048       # 加大队列容量
+CONFIG_BLE_SRV_LOG_LINE_SIZE=512
+CONFIG_BLE_SRV_LOG_FLUSH_INTERVAL_MS=2000 # 降低刷盘频率延长 SD 卡寿命
+CONFIG_BLE_SRV_LOG_MAX_FILES=100
+CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE=1024   # 至少保留 1MB 空闲
+CONFIG_BLE_SRV_LOG_MAX_FILE_SIZE=1024    # 单文件 1MB
+CONFIG_BLE_SRV_LOG_HTTP_PORT=8080
+```
+
+### menuconfig 操作提示
+
+- **进入子菜单**: 按 `Enter` 或 `→` 进入高亮项的子菜单
+- **切换 bool 选项**: 按 `Y` 启用、`N` 禁用，或在选项上按 `空格` 切换
+- **编辑 string/int 选项**: 按 `Enter` 进入编辑模式，输入完成后按 `Enter` 确认
+- **搜索配置项**: 按 `/` 输入关键字（如 `BLE_SRV_LOG`）快速定位
+- **保存退出**: 按 `Esc` 直到退出，选择 `Yes` 保存到 `sdkconfig`
+- **加载默认值**: 删除 `sdkconfig` 后执行 `idf.py reconfigure` 会重新生成（基于 `sdkconfig.defaults`）
+
+> ⚠️ 注意：直接编辑 `sdkconfig` 文件不推荐，应使用 `idf.py menuconfig` 或编辑 `sdkconfig.defaults`。`sdkconfig.defaults` 中的配置项名必须与 Kconfig 中定义完全一致（包括 `_ENABLED` 后缀）。
 
 ---
 
