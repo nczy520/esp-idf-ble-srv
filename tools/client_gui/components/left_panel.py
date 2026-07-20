@@ -49,7 +49,7 @@ class LeftPanelComponent(BaseComponent):
 
         self.filter_field = ft.TextField(
             label="设备名过滤",
-            value="BLE-SRV",
+            value="",
             prefix_icon=ft.Icons.FILTER_LIST,
             **input_style,
         )

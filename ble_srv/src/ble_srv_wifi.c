@@ -26,6 +26,7 @@ static const char *TAG = "BLE_SRV_WIFI";
 
 static bool s_initialized = false;
 static wifi_prov_config_t s_prov_config;
+static char s_ap_ssid[33] = {0};
 
 static uint8_t s_obf_key[6] = {0};
 static bool s_obf_key_ready = false;
@@ -152,6 +153,15 @@ bool ble_srv_wifi_provisioner_init(void)
     init_obf_key();
 
     s_prov_config = (wifi_prov_config_t)WIFI_PROV_DEFAULT_CONFIG();
+
+    uint8_t mac[6] = {0};
+    esp_err_t mac_ret = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    if (mac_ret == ESP_OK) {
+        snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%s-%02X%02X%02X",
+                CONFIG_WIFI_PROV_AP_SSID,
+                mac[3], mac[4], mac[5]);
+        s_prov_config.ap_ssid = s_ap_ssid;
+    }
 
     s_initialized = true;
     ESP_LOGI(TAG, "WiFi provisioner initialized");
