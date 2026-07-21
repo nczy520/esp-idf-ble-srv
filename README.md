@@ -3,12 +3,12 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Version](https://img.shields.io/badge/version-2.0.1-blueviolet)](ble_srv/idf_component.yml)
+[![Version](https://img.shields.io/badge/version-2.1.0-blueviolet)](ble_srv/idf_component.yml)
 
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 2.0.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 2.1.0 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
@@ -41,10 +41,10 @@ dependencies:
   ble_srv:
     git: https://github.com/your-org/esp-idf-ble-srv.git
     path: ble_srv
-    version: v2.0.1   # 可选：指定 tag、分支或 commit hash
+    version: v2.1.0   # 可选：指定 tag、分支或 commit hash
 ```
 
-> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v2.0.1`）以保证版本可追溯。
+> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v2.1.0`）以保证版本可追溯。
 
 配置完成后执行：
 
@@ -57,7 +57,7 @@ ESP-IDF 组件管理器会自动从 GitHub 克隆并引入 `ble_srv` 组件。
 #### 方式二：通过 ESP-IDF 组件管理器引入
 
 ```bash
-idf.py add-dependency "ble_srv^2.0.1"
+idf.py add-dependency "ble_srv^2.1.0"
 ```
 
 该命令会自动将依赖添加到 `idf_component.yml` 中，并从 ESP-IDF 组件仓库下载。
@@ -267,8 +267,8 @@ docs/
   PYTHON_CLI.md            # CLI客户端详细使用说明
   PYTHON_GUI.md            # GUI客户端详细使用说明
 tools/
-  client.py                # Python BLE 命令行客户端 v2.0.1
-  client_gui.py            # Python BLE GUI 客户端入口 v2.0.1
+  client.py                # Python BLE 命令行客户端 v2.1.0
+  client_gui.py            # Python BLE GUI 客户端入口 v2.1.0
   client/                  # CLI客户端核心模块
   client_gui/              # GUI客户端模块
 examples/
@@ -310,6 +310,33 @@ examples/
 - flet >= 0.20.0（GUI库，仅GUI客户端需要）
 
 ## 变更记录
+
+### v2.1.0 (2026-07-22)
+
+**设备端**:
+- **锁机制重构**: 将原有 5 种分散锁（GATT_LOCK/BT_LOCK/OTA_LOCK/LED_LOCK 等）统一为单一全局递归互斥锁 `ble_srv_lock`，通过 `BLE_SRV_LOCK()/BLE_SRV_UNLOCK()` 宏使用，移除约 100 行锁管理代码
+- **BLE 任务化**: 新增 `ble_srv_task.c` 和 `ble_srv_msg.h`，引入 BLE Service 任务和消息机制
+- **日志级别控制**: 新增 GATT 命令 `BLE_LOG_HTTP_CMD_SET_LEVEL(0x06)`，支持 E/W/I/D/V 五级动态切换；`ble_srv_log_storage_info_t` 增加 `log_level` 字段
+- **删除日志文件功能移除**: 移除 `BLE_LOG_HTTP_CMD_DELETE_ALL` 命令、`ble_srv_log_delete_all_files()` 函数及相关枚举/声明
+- **LittleFS 格式化重置计数**: 格式化后重置 NVS 中的 `log_count` 为 0，下次日志文件从 `000001.log` 开始
+- **时区提前设置**: `ble_srv_log_init()` 开头设置时区 `setenv("TZ", ..., 1); tzset();`，修复日志文件时间偏移 8 小时问题
+- **设备实时时间**: `ble_srv_device_info_t` 结构体新增 `current_time` 字段，通过 `time()` 获取
+
+**客户端 GUI**:
+- 删除"删除所有"按钮及相关逻辑
+- 新增日志级别下拉框（PopupMenuButton 实现）和标记日志输入框（复用 `BLE_LOG_HTTP_CMD_WRITE_LOG` 命令）
+- 操作卡片 UI 统一控件高度（32px）和样式
+- HTTP 服务卡片紧凑化布局
+
+**CLI 客户端**:
+- 同步删除 `log_delete_all_files` 方法
+- 新增 `log_set_level` 方法
+
+**版本号同步**:
+- `ble_srv/idf_component.yml`: 2.0.1 → 2.1.0
+- `examples/basic/CMakeLists.txt`: 2.0.1 → 2.1.0
+- `tools/client.py` / `tools/client_gui.py`: 2.0.1 → 2.1.0
+- 文档版本号同步更新
 
 ### v2.0.1 (2026-07-19)
 

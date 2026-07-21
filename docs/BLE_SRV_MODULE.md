@@ -1,4 +1,4 @@
-# ble_srv 模组使用说明 v2.0.1
+# ble_srv 模组使用说明 v2.1.0
 
 ## 目录
 
@@ -27,7 +27,7 @@
 
 `ble_srv` 是基于 ESP-IDF NimBLE 协议栈的 BLE（蓝牙低功耗）服务组件，为 ESP32 系列芯片提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。组件采用模块化设计，各功能可通过 menuconfig 独立开关。
 
-**版本**: 2.0.1
+**版本**: 2.1.0
 **协议栈**: NimBLE（ESP-IDF 内置）
 **兼容**: ESP-IDF v5.x / v6.x（推荐 v6.0+）
 
@@ -150,7 +150,7 @@ cp -r ble_srv your_project/components/
 或通过 ESP-IDF 组件管理器添加：
 
 ```bash
-idf.py add-dependency "ble_srv^2.0.1"
+idf.py add-dependency "ble_srv^2.1.0"
 ```
 
 ### 2. 配置项目

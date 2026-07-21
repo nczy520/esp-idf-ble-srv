@@ -125,7 +125,7 @@ from client_gui.gui_handlers import GuiHandlers
 class BleDeviceManager:
     """BLE设备管理器主应用"""
 
-    def __init__(self, version="2.0.1"):
+    def __init__(self, version="2.1.0"):
         self.event_loop = asyncio.new_event_loop()
         self.ble = BleCore()
         self.devices = []
@@ -305,7 +305,7 @@ class BleDeviceManager:
         ft.run(self.main)
 
 
-def main(version="2.0.1"):
+def main(version="2.1.0"):
     app = BleDeviceManager(version)
     app.run()
 
