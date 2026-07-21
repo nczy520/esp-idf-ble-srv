@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #include "ble_srv_ota_common.h"
 #include "ble_srv_ota_bt.h"
@@ -16,6 +17,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+typedef int (*ble_srv_custom_cmd_cb_t)(uint16_t conn_handle, const uint8_t *data, uint16_t data_len,
+                                        uint8_t *resp_buf, size_t resp_buf_len, uint16_t *resp_len);
 
 bool ble_srv_init(void);
 void ble_srv_deinit(void);

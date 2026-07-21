@@ -1,5 +1,5 @@
 {
-  "idf.currentSetup": "/Users/zy/.espressif/v6.0.2/esp-idf",
+  "idf.currentSetup": "D:\\esp\\v6.0.2\\esp-idf",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
@@ -14,5 +14,5 @@
     "--query-driver=**",
     "--compile-commands-dir=/Volumes/Workspaces/esp-idf-library/esp-idf-ble-srv/examples/basic/build"
   ],
-  "idf.portWin": "COM4"
+  "idf.portWin": "COM6"
 }

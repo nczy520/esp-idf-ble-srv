@@ -79,8 +79,6 @@ class GuiComponents:
         log_tab_comp = LogTabComponent(self.app)
         log_tab = log_tab_comp.build()
         self.log_tab = log_tab_comp
-        self.log_file_list = log_tab_comp.log_file_list
-        self.log_content_display = log_tab_comp.log_content_display
         self.log_overlay = log_tab_comp.disconnected_overlay
 
         ota_tab_comp = OTATabComponent(self.app)

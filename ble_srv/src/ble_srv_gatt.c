@@ -6,6 +6,7 @@
 #include "ble_srv_wifi.h"
 #include "ble_srv_led.h"
 #include "ble_srv_log.h"
+#include "ble_srv_msg.h"
 #include "ble_srv.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,15 +24,14 @@ static const char *TAG = "BLE_SRV_GATT";
 #define GATT_RESTART_CMD_DELAY_MS    100
 #define GATT_RESTART_CHR_DELAY_MS    500
 
-static SemaphoreHandle_t s_gatt_lock = NULL;
+#define BLE_SRV_GATT_WRITE_BUF_SIZE 512
 
-#define GATT_LOCK()   do { if (s_gatt_lock) xSemaphoreTake(s_gatt_lock, portMAX_DELAY); } while(0)
-#define GATT_UNLOCK() do { if (s_gatt_lock) xSemaphoreGive(s_gatt_lock); } while(0)
+static int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                   struct ble_gatt_access_ctxt *ctxt, void *arg);
+
+static uint8_t *s_write_buf = NULL;
 
 static uint8_t s_partition_index = 0;
-#define BLE_SRV_GATT_WRITE_BUF_SIZE 512
-#define BLE_SRV_GATT_SELECTED_FILE_SIZE 64
-static uint8_t *s_write_buf = NULL;
 
 static uint16_t s_srv_cmd_chr_val_handle = 0;
 static uint16_t s_srv_info_chr_val_handle = 0;
@@ -74,54 +74,48 @@ static uint16_t s_srv_custom_cmd_chr_val_handle = 0;
 static bool s_custom_cmd_notify_enabled = false;
 static ble_srv_custom_cmd_cb_t s_custom_cmd_cb = NULL;
 
-static uint16_t s_srv_log_file_list_chr_val_handle = 0;
-static uint16_t s_srv_log_file_content_chr_val_handle = 0;
-static uint16_t s_srv_log_file_download_chr_val_handle = 0;
 static uint16_t s_srv_log_http_ctrl_chr_val_handle = 0;
 static uint16_t s_srv_log_storage_chr_val_handle = 0;
-static char *s_selected_log_file = NULL;
 
-static const ble_uuid16_t s_srv_svc_uuid          = BLE_UUID16_INIT(BLE_SRV_SVC_UUID);
-static const ble_uuid16_t s_srv_cmd_chr_uuid      = BLE_UUID16_INIT(BLE_SRV_CMD_CHAR_UUID);
-static const ble_uuid16_t s_srv_info_chr_uuid     = BLE_UUID16_INIT(BLE_SRV_INFO_CHAR_UUID);
-static const ble_uuid16_t s_srv_memory_chr_uuid   = BLE_UUID16_INIT(BLE_SRV_MEMORY_CHAR_UUID);
-static const ble_uuid16_t s_srv_cpu_chr_uuid      = BLE_UUID16_INIT(BLE_SRV_CPU_CHAR_UUID);
-static const ble_uuid16_t s_srv_flash_chr_uuid    = BLE_UUID16_INIT(BLE_SRV_FLASH_CHAR_UUID);
+static const ble_uuid16_t s_srv_svc_uuid = BLE_UUID16_INIT(BLE_SRV_SVC_UUID);
+static const ble_uuid16_t s_srv_cmd_chr_uuid = BLE_UUID16_INIT(BLE_SRV_CMD_CHAR_UUID);
+static const ble_uuid16_t s_srv_info_chr_uuid = BLE_UUID16_INIT(BLE_SRV_INFO_CHAR_UUID);
+static const ble_uuid16_t s_srv_memory_chr_uuid = BLE_UUID16_INIT(BLE_SRV_MEMORY_CHAR_UUID);
+static const ble_uuid16_t s_srv_cpu_chr_uuid = BLE_UUID16_INIT(BLE_SRV_CPU_CHAR_UUID);
+static const ble_uuid16_t s_srv_flash_chr_uuid = BLE_UUID16_INIT(BLE_SRV_FLASH_CHAR_UUID);
 static const ble_uuid16_t s_srv_partition_chr_uuid = BLE_UUID16_INIT(BLE_SRV_PARTITION_CHAR_UUID);
-static const ble_uuid16_t s_srv_restart_chr_uuid  = BLE_UUID16_INIT(BLE_SRV_RESTART_CHAR_UUID);
+static const ble_uuid16_t s_srv_restart_chr_uuid = BLE_UUID16_INIT(BLE_SRV_RESTART_CHAR_UUID);
 
-#ifdef CONFIG_BLE_SRV_AUTH_ENABLED
-static const ble_uuid16_t s_srv_auth_chr_uuid      = BLE_UUID16_INIT(BLE_SRV_AUTH_CHAR_UUID);
-#endif
-
-static const ble_uuid16_t s_srv_log_chr_uuid       = BLE_UUID16_INIT(BLE_SRV_LOG_CHAR_UUID);
-static const ble_uuid16_t s_srv_custom_cmd_chr_uuid = BLE_UUID16_INIT(BLE_SRV_CUSTOM_CMD_CHAR_UUID);
-static const ble_uuid16_t s_srv_log_file_list_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_LIST_CHAR_UUID);
-static const ble_uuid16_t s_srv_log_file_content_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_CONTENT_CHAR_UUID);
-static const ble_uuid16_t s_srv_log_file_download_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_FILE_DOWNLOAD_CHAR_UUID);
-static const ble_uuid16_t s_srv_log_http_ctrl_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_HTTP_CTRL_CHAR_UUID);
-static const ble_uuid16_t s_srv_log_storage_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_STORAGE_CHAR_UUID);
-
-static const ble_uuid16_t s_ota_svc_uuid          = BLE_UUID16_INIT(BLE_OTA_SVC_UUID);
-static const ble_uuid16_t s_ota_bt_cmd_chr_uuid   = BLE_UUID16_INIT(BLE_OTA_BT_CMD_CHAR_UUID);
-static const ble_uuid16_t s_ota_bt_fw_data_chr_uuid = BLE_UUID16_INIT(BLE_OTA_BT_FW_DATA_CHAR_UUID);
-static const ble_uuid16_t s_ota_status_chr_uuid   = BLE_UUID16_INIT(BLE_OTA_STATUS_CHAR_UUID);
+static const ble_uuid16_t s_ota_svc_uuid = BLE_UUID16_INIT(BLE_OTA_SVC_UUID);
+static const ble_uuid16_t s_ota_bt_cmd_chr_uuid = BLE_UUID16_INIT(0xFFD1);
+static const ble_uuid16_t s_ota_bt_fw_data_chr_uuid = BLE_UUID16_INIT(0xFFD2);
+static const ble_uuid16_t s_ota_status_chr_uuid = BLE_UUID16_INIT(BLE_OTA_STATUS_CHAR_UUID);
 
 #ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
-static const ble_uuid16_t s_ota_url_chr_uuid      = BLE_UUID16_INIT(BLE_OTA_URL_CMD_CHAR_UUID);
+static const ble_uuid16_t s_ota_url_chr_uuid = BLE_UUID16_INIT(0xFFD4);
 #endif
 
-static const ble_uuid16_t s_wifi_svc_uuid          = BLE_UUID16_INIT(BLE_WIFI_SVC_UUID);
-static const ble_uuid16_t s_wifi_config_chr_uuid   = BLE_UUID16_INIT(BLE_WIFI_CONFIG_CHAR_UUID);
-static const ble_uuid16_t s_wifi_status_chr_uuid   = BLE_UUID16_INIT(BLE_WIFI_STATUS_CHAR_UUID);
-static const ble_uuid16_t s_wifi_ctrl_chr_uuid     = BLE_UUID16_INIT(BLE_WIFI_CTRL_CHAR_UUID);
+static const ble_uuid16_t s_wifi_svc_uuid = BLE_UUID16_INIT(0xFFC0);
+static const ble_uuid16_t s_wifi_config_chr_uuid = BLE_UUID16_INIT(0xFFC1);
+static const ble_uuid16_t s_wifi_status_chr_uuid = BLE_UUID16_INIT(0xFFC2);
+static const ble_uuid16_t s_wifi_ctrl_chr_uuid = BLE_UUID16_INIT(0xFFC3);
 
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
-static const ble_uuid16_t s_led_svc_uuid           = BLE_UUID16_INIT(BLE_LED_SVC_UUID);
-static const ble_uuid16_t s_led_ctrl_chr_uuid      = BLE_UUID16_INIT(BLE_LED_CTRL_CHAR_UUID);
-static const ble_uuid16_t s_led_color_chr_uuid     = BLE_UUID16_INIT(BLE_LED_COLOR_CHAR_UUID);
-static const ble_uuid16_t s_led_effect_chr_uuid    = BLE_UUID16_INIT(BLE_LED_EFFECT_CHAR_UUID);
+static const ble_uuid16_t s_led_svc_uuid = BLE_UUID16_INIT(0xFFB0);
+static const ble_uuid16_t s_led_ctrl_chr_uuid = BLE_UUID16_INIT(0xFFB1);
+static const ble_uuid16_t s_led_color_chr_uuid = BLE_UUID16_INIT(0xFFB2);
+static const ble_uuid16_t s_led_effect_chr_uuid = BLE_UUID16_INIT(0xFFB3);
 #endif
+
+#ifdef CONFIG_BLE_SRV_AUTH_ENABLED
+static const ble_uuid16_t s_auth_chr_uuid = BLE_UUID16_INIT(BLE_SRV_AUTH_CHAR_UUID);
+#endif
+
+static const ble_uuid16_t s_log_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_CHAR_UUID);
+static const ble_uuid16_t s_log_http_ctrl_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_HTTP_CTRL_CHAR_UUID);
+static const ble_uuid16_t s_log_storage_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_STORAGE_CHAR_UUID);
+
+static const ble_uuid16_t s_custom_cmd_chr_uuid = BLE_UUID16_INIT(BLE_SRV_CUSTOM_CMD_CHAR_UUID);
 
 static const struct ble_gatt_svc_def s_gatt_svcs[] = {
     {
@@ -167,55 +161,37 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             {
                 .uuid = &s_srv_restart_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_NOTIFY,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_srv_restart_chr_val_handle,
             },
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
             {
-                .uuid = &s_srv_auth_chr_uuid.u,
+                .uuid = &s_auth_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_srv_auth_chr_val_handle,
             },
 #endif
             {
-                .uuid = &s_srv_log_chr_uuid.u,
+                .uuid = &s_log_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_srv_log_chr_val_handle,
             },
             {
-                .uuid = &s_srv_custom_cmd_chr_uuid.u,
+                .uuid = &s_custom_cmd_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_srv_custom_cmd_chr_val_handle,
             },
             {
-                .uuid = &s_srv_log_file_list_chr_uuid.u,
-                .access_cb = ble_srv_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_READ,
-                .val_handle = &s_srv_log_file_list_chr_val_handle,
-            },
-            {
-                .uuid = &s_srv_log_file_content_chr_uuid.u,
-                .access_cb = ble_srv_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
-                .val_handle = &s_srv_log_file_content_chr_val_handle,
-            },
-            {
-                .uuid = &s_srv_log_file_download_chr_uuid.u,
-                .access_cb = ble_srv_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY,
-                .val_handle = &s_srv_log_file_download_chr_val_handle,
-            },
-            {
-                .uuid = &s_srv_log_http_ctrl_chr_uuid.u,
+                .uuid = &s_log_http_ctrl_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
                 .val_handle = &s_srv_log_http_ctrl_chr_val_handle,
             },
             {
-                .uuid = &s_srv_log_storage_chr_uuid.u,
+                .uuid = &s_log_storage_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_READ,
                 .val_handle = &s_srv_log_storage_chr_val_handle,
@@ -256,7 +232,6 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             { 0 },
         },
     },
-#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &s_wifi_svc_uuid.u,
@@ -264,7 +239,7 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             {
                 .uuid = &s_wifi_config_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_WRITE,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
                 .val_handle = &s_wifi_config_chr_val_handle,
             },
             {
@@ -282,7 +257,6 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             { 0 },
         },
     },
-#endif
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -291,7 +265,7 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             {
                 .uuid = &s_led_ctrl_chr_uuid.u,
                 .access_cb = ble_srv_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
                 .val_handle = &s_led_ctrl_chr_val_handle,
             },
             {
@@ -386,51 +360,6 @@ static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct bl
             return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
         return BLE_ATT_ERR_UNLIKELY;
-    } else if (attr_handle == s_srv_log_file_list_chr_val_handle) {
-        ble_srv_log_file_info_t *files = heap_caps_malloc(sizeof(ble_srv_log_file_info_t) * BLE_SRV_LOG_FILE_LIST_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!files) files = heap_caps_malloc(sizeof(ble_srv_log_file_info_t) * BLE_SRV_LOG_FILE_LIST_MAX, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (!files) {
-            return BLE_ATT_ERR_INSUFFICIENT_RES;
-        }
-        int count = ble_srv_log_get_file_list(files, BLE_SRV_LOG_FILE_LIST_MAX);
-        if (count > 0) {
-            uint8_t count_byte = (uint8_t)count;
-            rc = os_mbuf_append(ctxt->om, &count_byte, sizeof(count_byte));
-            if (rc != 0) { heap_caps_free(files); return BLE_ATT_ERR_INSUFFICIENT_RES; }
-            for (int i = 0; i < count; i++) {
-                rc = os_mbuf_append(ctxt->om, &files[i], sizeof(files[i]));
-                if (rc != 0) { heap_caps_free(files); return BLE_ATT_ERR_INSUFFICIENT_RES; }
-            }
-            heap_caps_free(files);
-            return 0;
-        }
-        heap_caps_free(files);
-        uint8_t zero = 0;
-        rc = os_mbuf_append(ctxt->om, &zero, sizeof(zero));
-        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-    } else if (attr_handle == s_srv_log_file_content_chr_val_handle) {
-        if (s_selected_log_file[0]) {
-            char *buffer = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (!buffer) buffer = heap_caps_malloc(1024, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-            if (!buffer) {
-                return BLE_ATT_ERR_INSUFFICIENT_RES;
-            }
-            int read_len = ble_srv_log_read_file(s_selected_log_file, buffer, 1024);
-            if (read_len >= 0) {
-                if (read_len == 0) {
-                    const char *empty_msg = "(empty file)";
-                    rc = os_mbuf_append(ctxt->om, empty_msg, strlen(empty_msg));
-                } else {
-                    rc = os_mbuf_append(ctxt->om, buffer, read_len);
-                }
-                heap_caps_free(buffer);
-                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            }
-            heap_caps_free(buffer);
-            ESP_LOGE(TAG, "Failed to read log file: %s", s_selected_log_file);
-            BLE_SRV_LOGE(TAG, "Failed to read log file: %s", s_selected_log_file);
-        }
-        return BLE_ATT_ERR_UNLIKELY;
     } else if (attr_handle == s_srv_log_http_ctrl_chr_val_handle) {
         uint8_t running = ble_srv_log_http_is_running() ? 1 : 0;
         rc = os_mbuf_append(ctxt->om, &running, sizeof(running));
@@ -516,19 +445,17 @@ static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct bl
     return BLE_ATT_ERR_UNLIKELY;
 }
 
-static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
-                             uint8_t *data, uint16_t data_len)
+void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
+                               const uint8_t *data, uint16_t data_len)
 {
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
     if (attr_handle == s_srv_auth_chr_val_handle) {
         if (data_len == 0 || data_len > BLE_SRV_AUTH_PIN_MAX_LEN) {
-            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            return;
         }
-        GATT_LOCK();
         bool match = (strlen(s_auth_pin) == data_len &&
                       memcmp(data, s_auth_pin, data_len) == 0);
         s_conn_authenticated = match;
-        GATT_UNLOCK();
         if (match) {
             ESP_LOGI(TAG, "PIN authentication success (conn=%d)", conn_handle);
             BLE_SRV_LOGI(TAG, "PIN authentication success (conn=%d)", conn_handle);
@@ -536,58 +463,41 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
             ESP_LOGW(TAG, "PIN authentication failed (conn=%d)", conn_handle);
             BLE_SRV_LOGW(TAG, "PIN authentication failed (conn=%d)", conn_handle);
         }
-        return match ? 0 : BLE_ATT_ERR_UNLIKELY;
+        return;
     }
     if (!s_conn_authenticated) {
         ESP_LOGW(TAG, "Write denied: not authenticated (handle=%d)", attr_handle);
         ble_srv_auth_fail_disconnect(conn_handle);
-        return BLE_SRV_AUTH_ERR_NOT_AUTH;
+        return;
     }
 #endif
 
     if (attr_handle == s_ota_bt_cmd_chr_val_handle) {
-        if (data_len < 1) {
-            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-        }
-        ble_ota_bt_cmd_t bt_cmd = (ble_ota_bt_cmd_t)data[0];
-        if (bt_cmd == BLE_OTA_BT_CMD_START && data_len < 1 + (int)sizeof(ble_ota_bt_start_req_t)) {
-            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-        }
-        bool ok = ble_srv_ota_bt_dispatch_cmd(data, data_len);
-        if (!ok && bt_cmd == BLE_OTA_BT_CMD_START) {
-            return BLE_ATT_ERR_UNLIKELY;
-        }
+        if (data_len < 1) return;
+        ble_srv_ota_bt_dispatch_cmd(data, data_len);
     }
 #ifdef CONFIG_BLE_SRV_OTA_URL_ENABLED
     else if (attr_handle == s_ota_url_chr_val_handle) {
-        if (data_len < 1) {
-            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-        }
+        if (data_len < 1) return;
         ble_ota_url_cmd_t cmd = (ble_ota_url_cmd_t)data[0];
         switch (cmd) {
         case BLE_OTA_URL_CMD_START_URL:
             if (data_len > 1) {
                 uint16_t url_len = data_len - 1;
-                if (url_len > BLE_OTA_URL_MAX_URL_LEN) {
-                    url_len = BLE_OTA_URL_MAX_URL_LEN;
-                }
+                if (url_len > BLE_OTA_URL_MAX_URL_LEN) url_len = BLE_OTA_URL_MAX_URL_LEN;
                 char url[BLE_OTA_URL_MAX_URL_LEN + 1] = {0};
                 memcpy(url, data + 1, url_len);
                 url[url_len] = '\0';
-                if (!ble_srv_ota_url_start(url)) {
-                    return BLE_ATT_ERR_UNLIKELY;
-                }
+                ble_srv_ota_url_start(url);
             }
             break;
         case BLE_OTA_URL_CMD_START_DEFAULT: {
             const char *default_url = CONFIG_BLE_SRV_OTA_URL_DEFAULT;
             if (strlen(default_url) == 0) {
                 ESP_LOGE(TAG, "Default OTA URL is empty");
-                return BLE_ATT_ERR_UNLIKELY;
+                return;
             }
-            if (!ble_srv_ota_url_start(default_url)) {
-                return BLE_ATT_ERR_UNLIKELY;
-            }
+            ble_srv_ota_url_start(default_url);
             break;
         }
         case BLE_OTA_URL_CMD_ABORT:
@@ -628,14 +538,10 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
         if (data_len >= 2) {
             uint8_t ssid_len = data[0];
             if (ssid_len > 32) ssid_len = 32;
-            if (data_len < (uint16_t)(1 + ssid_len + 1)) {
-                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-            }
+            if (data_len < (uint16_t)(1 + ssid_len + 1)) return;
             uint8_t pass_len = data[1 + ssid_len];
             if (pass_len > 64) pass_len = 64;
-            if (data_len < (uint16_t)(1 + ssid_len + 1 + pass_len)) {
-                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-            }
+            if (data_len < (uint16_t)(1 + ssid_len + 1 + pass_len)) return;
             char ssid[33] = {0};
             char password[65] = {0};
             memcpy(ssid, data + 1, ssid_len);
@@ -697,27 +603,6 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
                 }
             }
         }
-    } else if (attr_handle == s_srv_log_file_content_chr_val_handle) {
-        if (data_len > 0 && data_len <= BLE_SRV_GATT_SELECTED_FILE_SIZE - 1) {
-            memset(s_selected_log_file, 0, BLE_SRV_GATT_SELECTED_FILE_SIZE);
-            memcpy(s_selected_log_file, data, data_len);
-            ESP_LOGI(TAG, "Selected log file: %s", s_selected_log_file);
-        }
-    } else if (attr_handle == s_srv_log_file_download_chr_val_handle) {
-        if (s_selected_log_file[0]) {
-            char *buffer = heap_caps_malloc(512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (!buffer) buffer = heap_caps_malloc(512, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-            if (buffer) {
-                int read_len = ble_srv_log_read_file(s_selected_log_file, buffer, 512);
-                if (read_len > 0) {
-                    struct os_mbuf *om = ble_hs_mbuf_from_flat(buffer, read_len);
-                    if (om) {
-                        ble_gatts_notify_custom(conn_handle, s_srv_log_file_download_chr_val_handle, om);
-                    }
-                }
-                heap_caps_free(buffer);
-            }
-        }
     } else if (attr_handle == s_srv_log_http_ctrl_chr_val_handle) {
         if (data_len > 0) {
             uint8_t cmd = data[0];
@@ -736,11 +621,25 @@ static int handle_write_chr(uint16_t conn_handle, uint16_t attr_handle,
                 memcpy(msg, data + 1, msg_len);
                 msg[msg_len] = '\0';
                 BLE_SRV_LOGI("CLIENT", "%s", msg);
+            } else if (cmd == BLE_SRV_LOG_HTTP_CMD_FORMAT_LITTLEFS) {
+                ESP_LOGI(TAG, "Format LittleFS requested");
+                BLE_SRV_LOGI(TAG, "Format LittleFS requested");
+                ble_srv_log_format_littlefs();
+            } else if (cmd == BLE_SRV_LOG_HTTP_CMD_SET_LEVEL && data_len > 1) {
+                uint8_t level = data[1];
+                if (level <= BLE_SRV_LOG_LEVEL_VERBOSE) {
+                    ESP_LOGI(TAG, "Set log level: %d", level);
+                    ble_srv_log_set_level((ble_srv_log_level_t)level);
+                }
             }
         }
     }
+}
 
-    return 0;
+void ble_srv_gatt_handle_read(uint16_t conn_handle, uint16_t attr_handle)
+{
+    (void)conn_handle;
+    (void)attr_handle;
 }
 
 int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -751,6 +650,14 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         return handle_read_chr(conn_handle, attr_handle, ctxt);
 
     case BLE_GATT_ACCESS_OP_WRITE_CHR: {
+#ifdef CONFIG_BLE_SRV_AUTH_ENABLED
+        if (!s_conn_authenticated && attr_handle != s_srv_auth_chr_val_handle) {
+            ESP_LOGW(TAG, "Write denied: not authenticated (handle=%d)", attr_handle);
+            ble_srv_auth_fail_disconnect(conn_handle);
+            return BLE_SRV_AUTH_ERR_NOT_AUTH;
+        }
+#endif
+
         uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
         if (om_len == 0 || om_len > BLE_SRV_GATT_WRITE_BUF_SIZE) {
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
@@ -762,7 +669,8 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             return BLE_ATT_ERR_UNLIKELY;
         }
 
-        return handle_write_chr(conn_handle, attr_handle, s_write_buf, data_len);
+        ble_srv_gatt_handle_write(conn_handle, attr_handle, s_write_buf, data_len);
+        return 0;
     }
 
     default:
@@ -781,30 +689,13 @@ void ble_srv_gatt_deinit(void)
         heap_caps_free(s_write_buf);
         s_write_buf = NULL;
     }
-    if (s_selected_log_file) {
-        heap_caps_free(s_selected_log_file);
-        s_selected_log_file = NULL;
-    }
-    if (s_gatt_lock) {
-        vSemaphoreDelete(s_gatt_lock);
-        s_gatt_lock = NULL;
-    }
 }
 
-bool ble_srv_gatt_init_lock(void)
+bool ble_srv_gatt_init(void)
 {
-    if (s_gatt_lock) return true;
-    s_gatt_lock = xSemaphoreCreateMutex();
-    if (!s_gatt_lock) return false;
-
     s_write_buf = heap_caps_malloc(BLE_SRV_GATT_WRITE_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_write_buf) s_write_buf = heap_caps_malloc(BLE_SRV_GATT_WRITE_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!s_write_buf) { vSemaphoreDelete(s_gatt_lock); s_gatt_lock = NULL; return false; }
-
-    s_selected_log_file = heap_caps_malloc(BLE_SRV_GATT_SELECTED_FILE_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_selected_log_file) s_selected_log_file = heap_caps_malloc(BLE_SRV_GATT_SELECTED_FILE_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!s_selected_log_file) { heap_caps_free(s_write_buf); s_write_buf = NULL; vSemaphoreDelete(s_gatt_lock); s_gatt_lock = NULL; return false; }
-    memset(s_selected_log_file, 0, BLE_SRV_GATT_SELECTED_FILE_SIZE);
+    if (!s_write_buf) return false;
 
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
     const char *pin = CONFIG_BLE_SRV_AUTH_PIN;
@@ -820,48 +711,32 @@ bool ble_srv_gatt_init_lock(void)
 
 bool ble_srv_gatt_get_ota_status_notify_enabled(void)
 {
-    GATT_LOCK();
-    bool en = s_ota_status_notify_enabled;
-    GATT_UNLOCK();
-    return en;
+    return s_ota_status_notify_enabled;
 }
 
 void ble_srv_gatt_set_ota_status_notify_enabled(bool enabled)
 {
-    GATT_LOCK();
     s_ota_status_notify_enabled = enabled;
-    GATT_UNLOCK();
 }
 
 uint16_t ble_srv_gatt_get_ota_status_chr_val_handle(void)
 {
-    GATT_LOCK();
-    uint16_t h = s_ota_status_chr_val_handle;
-    GATT_UNLOCK();
-    return h;
+    return s_ota_status_chr_val_handle;
 }
 
 bool ble_srv_gatt_get_wifi_status_notify_enabled(void)
 {
-    GATT_LOCK();
-    bool en = s_wifi_status_notify_enabled;
-    GATT_UNLOCK();
-    return en;
+    return s_wifi_status_notify_enabled;
 }
 
 void ble_srv_gatt_set_wifi_status_notify_enabled(bool enabled)
 {
-    GATT_LOCK();
     s_wifi_status_notify_enabled = enabled;
-    GATT_UNLOCK();
 }
 
 uint16_t ble_srv_gatt_get_wifi_status_chr_val_handle(void)
 {
-    GATT_LOCK();
-    uint16_t h = s_wifi_status_chr_val_handle;
-    GATT_UNLOCK();
-    return h;
+    return s_wifi_status_chr_val_handle;
 }
 
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
@@ -895,10 +770,7 @@ void ble_srv_gatt_clear_auth_state(uint16_t conn_handle)
 
 uint16_t ble_srv_gatt_get_auth_chr_val_handle(void)
 {
-    GATT_LOCK();
-    uint16_t h = s_srv_auth_chr_val_handle;
-    GATT_UNLOCK();
-    return h;
+    return s_srv_auth_chr_val_handle;
 }
 #else
 bool ble_srv_gatt_is_auth_enabled(void)
@@ -931,25 +803,17 @@ uint16_t ble_srv_gatt_get_auth_chr_val_handle(void)
 
 bool ble_srv_gatt_log_notify_enabled(void)
 {
-    GATT_LOCK();
-    bool en = s_log_notify_enabled;
-    GATT_UNLOCK();
-    return en;
+    return s_log_notify_enabled;
 }
 
 void ble_srv_gatt_set_log_notify_enabled(bool enabled)
 {
-    GATT_LOCK();
     s_log_notify_enabled = enabled;
-    GATT_UNLOCK();
 }
 
 uint16_t ble_srv_gatt_get_log_chr_val_handle(void)
 {
-    GATT_LOCK();
-    uint16_t h = s_srv_log_chr_val_handle;
-    GATT_UNLOCK();
-    return h;
+    return s_srv_log_chr_val_handle;
 }
 
 static uint16_t s_log_conn_handle = 0;
@@ -957,6 +821,13 @@ static uint16_t s_log_conn_handle = 0;
 void ble_srv_gatt_set_log_conn_handle(uint16_t conn_handle)
 {
     s_log_conn_handle = conn_handle;
+}
+
+static uint16_t s_custom_cmd_conn_handle = 0;
+
+void ble_srv_gatt_set_custom_cmd_conn_handle(uint16_t conn_handle)
+{
+    s_custom_cmd_conn_handle = conn_handle;
 }
 
 static char ble_srv_gatt_log_level_char(ble_srv_log_level_t level)
@@ -1047,51 +918,40 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
     }
 }
 
-uint16_t ble_srv_gatt_get_custom_cmd_chr_val_handle(void)
+void ble_srv_gatt_custom_cmd_notify(uint16_t conn_handle, const uint8_t *data, uint16_t data_len)
 {
-    GATT_LOCK();
-    uint16_t h = s_srv_custom_cmd_chr_val_handle;
-    GATT_UNLOCK();
-    return h;
-}
+    if (!s_custom_cmd_notify_enabled || s_srv_custom_cmd_chr_val_handle == 0) {
+        return;
+    }
+    if (!data || data_len == 0) {
+        return;
+    }
+    if (conn_handle == 0 || conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
 
-bool ble_srv_gatt_custom_cmd_notify_enabled(void)
-{
-    GATT_LOCK();
-    bool en = s_custom_cmd_notify_enabled;
-    GATT_UNLOCK();
-    return en;
-}
-
-void ble_srv_gatt_set_custom_cmd_notify_enabled(bool enabled)
-{
-    GATT_LOCK();
-    s_custom_cmd_notify_enabled = enabled;
-    GATT_UNLOCK();
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, data_len);
+    if (om) {
+        ble_gatts_notify_custom(conn_handle, s_srv_custom_cmd_chr_val_handle, om);
+    }
 }
 
 void ble_srv_gatt_set_custom_cmd_callback(ble_srv_custom_cmd_cb_t cb)
 {
-    GATT_LOCK();
     s_custom_cmd_cb = cb;
-    GATT_UNLOCK();
 }
 
-bool ble_srv_gatt_custom_cmd_notify(uint16_t conn_handle, const uint8_t *data, uint16_t data_len)
+bool ble_srv_gatt_get_custom_cmd_notify_enabled(void)
 {
-    if (!s_custom_cmd_notify_enabled || s_srv_custom_cmd_chr_val_handle == 0) {
-        return false;
-    }
-    if (!data || data_len == 0) {
-        return false;
-    }
-    if (conn_handle == 0 || conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-        return false;
-    }
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, data_len);
-    if (!om) {
-        return false;
-    }
-    int rc = ble_gatts_notify_custom(conn_handle, s_srv_custom_cmd_chr_val_handle, om);
-    return rc == 0;
+    return s_custom_cmd_notify_enabled;
+}
+
+void ble_srv_gatt_set_custom_cmd_notify_enabled(bool enabled)
+{
+    s_custom_cmd_notify_enabled = enabled;
+}
+
+uint16_t ble_srv_gatt_get_custom_cmd_chr_val_handle(void)
+{
+    return s_srv_custom_cmd_chr_val_handle;
 }

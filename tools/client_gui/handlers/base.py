@@ -149,6 +149,9 @@ class BaseHandler:
         if hasattr(self.ui, 'log_tab') and self.ui.log_tab:
             buttons.extend([
                 self.ui.log_tab.refresh_btn,
+                self.ui.log_tab.format_btn,
+                self.ui.log_tab.write_marker_btn,
+                self.ui.log_tab.open_browser_btn,
             ])
         return buttons
 

@@ -2,9 +2,8 @@
 日志浏览控制处理器
 """
 
-import os
 import threading
-import urllib.request
+import webbrowser
 import flet as ft
 from client_gui.handlers.base import BaseHandler
 
@@ -24,242 +23,56 @@ class LogControlHandler(BaseHandler):
             return ui.log_tab
         return None
 
-    def _show_loading(self, message):
-        page = self._log_page()
-        if page and hasattr(page, 'loading_overlay') and page.loading_overlay:
-            self.app.show_loading_overlay(page.loading_overlay, message)
-
-    def _hide_loading(self):
-        page = self._log_page()
-        if page and hasattr(page, 'loading_overlay') and page.loading_overlay:
-            self.app.hide_loading_overlay(page.loading_overlay)
-
-    def refresh_log_list(self):
-        page = self._log_page()
-        if not page:
-            return
-        if not self.ble.connected:
-            self.app.show_snack("请先连接设备")
-            return
-
-        def on_done(result):
-            if isinstance(result, Exception) or result is None:
-                self.app.show_snack("日志文件列表读取失败")
-                return
-            files = []
-            for item in result:
-                try:
-                    if isinstance(item, dict):
-                        filename = item.get("name", "")
-                        size = item.get("size", 0)
-                        mtime = item.get("mtime", 0)
-                    else:
-                        filename, size, mtime = item
-                    files.append({
-                        "filename": filename,
-                        "size": size,
-                        "mtime": mtime,
-                    })
-                except Exception:
-                    continue
-            files.sort(key=lambda x: x["filename"], reverse=True)
-            files = files[:20]
-            self._update_file_list_ui(files)
-
-        self._run_with_loading(page.refresh_btn, self.ble.get_log_file_list(), on_done, "刷新中...")
-        self.refresh_storage_info()
-
-    def _update_file_list_ui(self, files):
+    def update_buttons_state(self):
+        """根据连接状态更新按钮状态"""
         page = self._log_page()
         if not page:
             return
 
-        page.log_file_list.controls.clear()
-        page.selected_file_name = None
+        ble_connected = self.ble.connected if self.ble else False
 
-        for f in files:
-            file_item = self._create_file_item(f)
-            page.log_file_list.controls.append(file_item)
+        buttons = [
+            page.refresh_btn,
+            page.format_btn,
+            page.write_marker_btn,
+            page.open_browser_btn,
+        ]
 
-        if not files:
-            page.log_file_list.controls.append(
-                ft.Container(
-                    content=ft.Column([
-                        ft.Icon(ft.Icons.FOLDER_OPEN, size=48, color=ft.Colors.GREY_400),
-                        ft.Text("暂无日志文件", color=ft.Colors.GREY_600, size=14),
-                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
-                    alignment=ft.alignment.center,
-                    padding=40,
-                )
-            )
+        for btn in buttons:
+            if not ble_connected:
+                if not btn.disabled:
+                    self._apply_disabled_style(btn)
+                    btn.disabled = True
+            else:
+                if btn.disabled:
+                    self._restore_button_style(btn)
+                    btn.disabled = False
+
+        page.http_switch.disabled = not ble_connected
+        page.level_dropdown.disabled = not ble_connected
+        page.marker_input.disabled = not ble_connected
 
         self.safe_update()
-
-    def _create_file_item(self, file_info):
-        filename = file_info["filename"]
-        size = file_info["size"]
-        mtime = file_info["mtime"]
-        is_selected = (page.selected_file_name == filename) if (page := self._log_page()) else False
-
-        preview_btn = ft.IconButton(
-            icon=ft.Icons.VISIBILITY_OUTLINED,
-            icon_size=18,
-            tooltip="预览",
-            on_click=lambda e, fn=filename: self.app.run_async(self._preview_file(fn)),
-            padding=4,
-        )
-
-        download_btn = ft.IconButton(
-            icon=ft.Icons.DOWNLOAD_OUTLINED,
-            icon_size=18,
-            tooltip="下载",
-            on_click=lambda e, fn=filename: self.app.run_async(self._download_file(fn)),
-            padding=4,
-        )
-
-        return ft.Container(
-            content=ft.Row([
-                ft.Icon(
-                    ft.Icons.DESCRIPTION_OUTLINED,
-                    size=20,
-                    color=ft.Colors.BLUE_600 if is_selected else ft.Colors.GREY_500,
-                ),
-                ft.Column([
-                    ft.Text(
-                        filename,
-                        size=13,
-                        weight=ft.FontWeight.W_500 if is_selected else ft.FontWeight.W_400,
-                        color=ft.Colors.BLUE_700 if is_selected else ft.Colors.ON_SURFACE,
-                        overflow=ft.TextOverflow.ELLIPSIS,
-                    ),
-                    ft.Text(
-                        f"{self._format_size(size)}  |  {self._format_time(mtime)}",
-                        size=11,
-                        color=ft.Colors.GREY_600,
-                    ),
-                ], spacing=2, expand=True),
-                ft.Row([
-                    preview_btn,
-                    download_btn,
-                ], spacing=2),
-            ], spacing=8, alignment=ft.MainAxisAlignment.START),
-            bgcolor=ft.Colors.BLUE_50 if is_selected else ft.Colors.TRANSPARENT,
-            border=ft.border.Border(
-                left=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
-                top=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
-                right=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
-                bottom=ft.border.BorderSide(1, ft.Colors.BLUE_300 if is_selected else ft.Colors.TRANSPARENT),
-            ) if is_selected else None,
-            padding=ft.Padding(left=8, right=8, top=6, bottom=6),
-            border_radius=4,
-            on_click=lambda e, fn=filename: self.app.run_async(self._select_file(fn)),
-            ink=True,
-        )
-
-    def _format_size(self, size):
-        if size >= 1024 * 1024:
-            return f"{size / (1024 * 1024):.2f} MB"
-        elif size >= 1024:
-            return f"{size / 1024:.2f} KB"
-        return f"{size} B"
-
-    def _format_time(self, timestamp):
-        from datetime import datetime
-        try:
-            return datetime.fromtimestamp(timestamp).strftime("%m-%d %H:%M")
-        except Exception:
-            return "未知"
-
-    async def _select_file(self, filename):
-        page = self._log_page()
-        if not page:
-            return
-        page.selected_file_name = filename
-        await self._preview_file(filename)
-
-    async def _preview_file(self, filename):
-        if not self.ble.connected:
-            self.app.show_snack("请先连接设备")
-            return
-        page = self._log_page()
-        if not page:
-            return
-
-        page.selected_file_name = filename
-        self._show_loading(f"正在读取 {filename} ...")
-
-        def on_selected(result):
-            if isinstance(result, Exception) or not result:
-                self._hide_loading()
-                self.app.show_snack("无法选择日志文件")
-                return
-            def on_read(content):
-                self._hide_loading()
-                if isinstance(content, Exception):
-                    self.app.show_snack(f"读取日志失败: {content}")
-                    return
-                self._show_content(filename, content)
-            self.app.run_async(self.ble.read_log_file(), on_read)
-
-        self.app.run_async(self.ble.select_log_file(filename), on_selected)
-
-    def _show_content(self, filename, content):
-        page = self._log_page()
-        if not page:
-            return
-
-        if content is None:
-            page.log_content_display.value = f"无法读取 {filename}"
-        else:
-            page.log_content_display.label = f"日志内容 - {filename}"
-            page.log_content_display.value = content
-
-        self.safe_update()
-
-    async def _download_file(self, filename):
-        if not self.ble.connected:
-            self.app.show_snack("请先连接设备")
-            return
-
-        def _download_sync():
-            try:
-                home_dir = os.path.expanduser("~")
-                downloads_dir = os.path.join(home_dir, "Downloads")
-                if not os.path.exists(downloads_dir):
-                    downloads_dir = home_dir
-                save_path = os.path.join(downloads_dir, filename)
-
-                if self._http_running and self._http_url:
-                    file_url = self._http_url + "logs/" + filename
-                    try:
-                        self._show_loading(f"正在通过HTTP下载 {filename} ...")
-                        urllib.request.urlretrieve(file_url, save_path)
-                        self._hide_loading()
-                        self.app.show_snack(f"已保存到: {save_path}")
-                        self.app.run_async(self.ble.write_device_log(f"日志下载成功: {save_path}"))
-                        return
-                    except Exception as e:
-                        self._hide_loading()
-                        self.app.show_snack(f"HTTP下载失败，尝试BLE下载: {e}")
-
-                def on_done(result):
-                    if isinstance(result, Exception) or not result:
-                        self.app.show_snack("下载失败，请启动HTTP服务器下载完整文件")
-                    else:
-                        self.app.show_snack(f"已保存到: {save_path}")
-                        self.app.run_async(self.ble.write_device_log(f"日志下载成功: {save_path}"))
-
-                self.app.run_async(self.ble.download_log_file(filename, save_path), on_done)
-            except Exception as e:
-                self._hide_loading()
-                self.app.show_snack(f"下载失败: {e}")
-
-        threading.Thread(target=_download_sync, daemon=True).start()
 
     async def toggle_http_server(self, enable):
         if not self.ble.connected:
             self.app.show_snack("请先连接设备")
+            page = self._log_page()
+            if page:
+                page.http_switch.value = False
+                self.safe_update()
             return
+
+        if enable:
+            wifi_status = await self.ble.wifi_status()
+            if not wifi_status or not wifi_status.connected:
+                self.app.show_snack("请先连接WiFi")
+                page = self._log_page()
+                if page:
+                    page.http_switch.value = False
+                    self.safe_update()
+                return
+
         page = self._log_page()
         if not page:
             return
@@ -312,24 +125,123 @@ class LogControlHandler(BaseHandler):
 
         self.app.run_async(self.ble.log_http_get_status(), on_status)
 
-    def refresh_storage_info(self):
-        if not self.ble.connected:
+    def log_refresh(self, event=None):
+        """刷新日志页面信息"""
+        if not self.check_connected():
+            return
+        page = self._log_page()
+        if not page:
+            return
+        btn = page.refresh_btn
+
+        def callback(result):
+            if isinstance(result, Exception):
+                self.app.show_snack(f"读取存储信息失败: {result}")
+                return
+            page.update_storage_info(result)
+            self.safe_update()
+
+        self._run_with_loading(btn, self.ble.read_log_storage_info(), callback, loading_text="刷新中...")
+
+    def log_open_browser(self, event=None):
+        """在浏览器中打开HTTP服务器"""
+        if self._http_url:
+            webbrowser.open(self._http_url)
+
+    def log_set_level(self, event=None):
+        """设置日志级别"""
+        page = self._log_page()
+        if not page or not self.check_connected():
+            return
+        # 忽略程序化设置值时的触发
+        if page._level_updating:
+            return
+        level = int(page._level_value) if page._level_value else 3
+        self.log(f"设置日志级别: {level}", "info")
+
+        def callback(result):
+            if isinstance(result, Exception):
+                self.app.show_snack(f"设置日志级别失败: {result}")
+                return
+            self.app.show_snack("日志级别已更新")
+
+        self._run_with_loading(None, self.ble.log_set_level(level), callback, loading_text="设置中...")
+
+    def log_write_marker(self, event=None):
+        """写入客户端标记日志"""
+        page = self._log_page()
+        if not page or not self.check_connected():
+            return
+        msg = page.marker_input.value.strip() if page.marker_input.value else ""
+        if not msg:
+            self.app.show_snack("请输入标记内容")
+            return
+
+        def callback(result):
+            if isinstance(result, Exception):
+                self.app.show_snack(f"写入失败: {result}")
+                return
+            self.app.show_snack("标记已写入设备日志")
+            page.marker_input.value = ""
+            self.safe_update()
+
+        self._run_with_loading(page.write_marker_btn, self.ble.log_write_marker(msg), callback, loading_text="写入中...")
+
+    def log_format(self, event=None):
+        """确认格式化LittleFS分区"""
+        if not self.check_connected():
             return
         page = self._log_page()
         if not page:
             return
 
-        def on_done(result):
-            if isinstance(result, Exception):
-                self.app.show_snack(f"读取存储信息失败: {result}")
-                return
-            if result is None:
-                return
-            page.update_storage_info(result)
+        def do_format(dlg):
+            dlg.open = False
             self.safe_update()
+            self.format_littlefs()
 
-        self.app.run_async(self.ble.read_log_storage_info(), on_done)
+        dlg = ft.AlertDialog(
+            title=ft.Text("危险操作"),
+            content=ft.Text("确定要格式化LittleFS分区吗？所有数据将永久丢失！"),
+            actions=[
+                ft.TextButton("取消", on_click=lambda e: setattr(dlg, 'open', False) or self.safe_update()),
+                ft.TextButton("格式化", on_click=lambda e: do_format(dlg)),
+            ],
+        )
+        self.page.overlay.append(dlg)
+        dlg.open = True
+        self.safe_update()
+
+    def format_littlefs(self, event=None):
+        """执行格式化LittleFS分区"""
+        page = self._log_page()
+        if not page:
+            return
+        btn = page.format_btn
+
+        def callback(result):
+            if isinstance(result, Exception):
+                self.app.show_snack(f"格式化失败: {result}")
+                return
+            self.app.show_snack("LittleFS分区格式化完成")
+            # 重新读取存储信息
+            def storage_callback(storage_result):
+                if not isinstance(storage_result, Exception):
+                    page.update_storage_info(storage_result)
+                    self.safe_update()
+            self.app.run_async(self.ble.read_log_storage_info(), storage_callback)
+
+        self._run_with_loading(btn, self.ble.log_format_littlefs(), callback, loading_text="格式化中...")
 
     def on_tab_selected(self):
-        self.refresh_log_list()
-        self.app.run_async(self.check_http_status())
+        self.update_buttons_state()
+        if self.ble.connected:
+            self.log_refresh()
+            self.app.run_async(self.check_http_status())
+
+    def on_ble_disconnected(self):
+        """设备断开连接时重置HTTP状态和按钮状态"""
+        self._update_http_ui(False, "")
+        self._http_running = False
+        self._http_url = ""
+        self.update_buttons_state()

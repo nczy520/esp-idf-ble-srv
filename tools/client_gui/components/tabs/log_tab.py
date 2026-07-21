@@ -4,7 +4,6 @@
 
 import webbrowser
 import flet as ft
-from datetime import datetime
 from client_gui.components.tabs.base_tab import BaseTabComponent
 
 
@@ -13,234 +12,310 @@ class LogTabComponent(BaseTabComponent):
 
     def __init__(self, app):
         super().__init__(app)
-        self.log_file_list = None
-        self.log_content_display = None
         self.disconnected_overlay = None
         self.loading_overlay = None
-        self.loading_text = None
-        self.refresh_btn = None
         self.http_switch = None
         self.http_url_text = None
         self.http_status_icon = None
+        self.http_status_text = None
         self.open_browser_btn = None
-        self.url_container = None
-        self.selected_file_name = None
         self._current_url = ""
-        self.storage_type_text = None
-        self.storage_total_text = None
-        self.storage_used_text = None
-        self.storage_free_text = None
-        self.storage_file_count_text = None
+        self.storage_info_text = None
         self.storage_usage_bar = None
-
-    def _format_size(self, size):
-        if size >= 1024 * 1024:
-            return f"{size / (1024 * 1024):.2f} MB"
-        elif size >= 1024:
-            return f"{size / 1024:.2f} KB"
-        return f"{size} B"
-
-    def _format_time(self, timestamp):
-        try:
-            return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return "未知"
-
-    def _open_in_browser(self, e):
-        if self._current_url:
-            webbrowser.open(self._current_url)
+        self.refresh_btn = None
+        self.format_btn = None
+        self.level_dropdown = None
+        self.level_label = None
+        self._level_value = "3"
+        self._level_updating = False
+        self.marker_input = None
+        self.write_marker_btn = None
 
     def _build_loading_overlay(self):
-        self.loading_text = ft.Text("处理中...", size=14, color=ft.Colors.GREY_600)
         return ft.Container(
             content=ft.Column([
-                ft.ProgressRing(width=40, height=40, stroke_width=3),
-                self.loading_text,
-            ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER),
+                ft.ProgressRing(width=24, height=24, stroke_width=2),
+                ft.Text("处理中...", size=11, color=ft.Colors.GREY_600),
+            ], spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER),
             alignment=ft.alignment.Alignment(0, 0),
             expand=True,
             bgcolor=ft.Colors.with_opacity(0.5, ft.Colors.WHITE),
             visible=False,
         )
 
-    def _build_storage_info_card(self):
-        self.storage_type_text = ft.Text("存储类型: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT, weight=ft.FontWeight.W_500)
-        self.storage_total_text = ft.Text("总大小: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
-        self.storage_used_text = ft.Text("已用: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
-        self.storage_free_text = ft.Text("剩余: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
-        self.storage_file_count_text = ft.Text("日志文件: --", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
-        self.storage_usage_bar = ft.ProgressBar(
-            value=0,
-            bar_height=6,
-            border_radius=3,
-            color=ft.Colors.BLUE_500,
-            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
-        )
-
-        return ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    ft.Icon(ft.Icons.STORAGE, size=16, color=ft.Colors.BLUE_600),
-                    self.storage_type_text,
-                ], spacing=6),
-                ft.Container(height=6),
-                self.storage_usage_bar,
-                ft.Container(height=6),
-                ft.Row([
-                    self.storage_used_text,
-                    ft.Text("|", size=12, color=ft.Colors.OUTLINE),
-                    self.storage_total_text,
-                ], spacing=6),
-                ft.Row([
-                    self.storage_free_text,
-                    ft.Text("|", size=12, color=ft.Colors.OUTLINE),
-                    self.storage_file_count_text,
-                ], spacing=6),
-            ], spacing=2),
-            padding=ft.Padding(left=10, right=10, top=10, bottom=10),
-            bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
-            border_radius=8,
-            border=ft.border.Border(
-                left=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-                top=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-                right=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-                bottom=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-            ),
-        )
-
     def update_storage_info(self, storage_info=None):
         if storage_info is None:
-            self.storage_type_text.value = "存储类型: --"
-            self.storage_total_text.value = "总大小: --"
-            self.storage_used_text.value = "已用: --"
-            self.storage_free_text.value = "剩余: --"
-            self.storage_file_count_text.value = "日志文件: --"
+            self.storage_info_text.value = "存储类型: -- | 总容量: -- | 已用: -- | 可用: -- | 文件数: --"
             self.storage_usage_bar.value = 0
             return
 
-        self.storage_type_text.value = f"存储类型: {storage_info.get_storage_type_name()}"
-        self.storage_total_text.value = f"总大小: {storage_info._fmt_size(storage_info.total_size)}"
-        self.storage_used_text.value = f"已用: {storage_info._fmt_size(storage_info.used_size)}"
-        self.storage_free_text.value = f"剩余: {storage_info._fmt_size(storage_info.free_size)}"
-        self.storage_file_count_text.value = f"日志文件: {storage_info.file_count} 个"
+        storage_type = storage_info.get_storage_type_name()
+        total = storage_info._fmt_size(storage_info.total_size)
+        used = storage_info._fmt_size(storage_info.used_size)
+        free = storage_info._fmt_size(storage_info.free_size)
+        count = storage_info.file_count
+
+        self.storage_info_text.value = f"{storage_type} | 总: {total} | 已用: {used} | 可用: {free} | {count}个文件"
+
         if storage_info.total_size > 0:
-            self.storage_usage_bar.value = storage_info.used_size / storage_info.total_size
+            usage_percent = storage_info.used_size / storage_info.total_size
+            self.storage_usage_bar.value = usage_percent
         else:
             self.storage_usage_bar.value = 0
 
+        # 同步日志级别（避免触发on_select）
+        if hasattr(storage_info, 'log_level') and self.level_label:
+            level_map = {"1": "ERROR", "2": "WARN", "3": "INFO", "4": "DEBUG", "5": "VERBOSE"}
+            self._level_updating = True
+            self._level_value = str(storage_info.log_level)
+            self.level_label.value = level_map.get(self._level_value, "INFO")
+            self._level_updating = False
+
     def build(self):
-        self.log_file_list = ft.ListView(
-            spacing=4,
-            expand=True,
-            padding=8,
-        )
-
-        self.log_content_display = ft.TextField(
-            multiline=True,
-            read_only=True,
-            min_lines=20,
-            max_lines=100,
-            border_radius=6,
-            text_size=12,
-            bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
-            border_color=ft.Colors.OUTLINE_VARIANT,
-            filled=True,
-            label="日志内容",
-            expand=True,
-        )
-
-        self.refresh_btn = self._action_btn("刷新列表", ft.Icons.REFRESH, "refresh_log_list")
+        self.disconnected_overlay = self._build_overlay()
+        self.loading_overlay = self._build_loading_overlay()
 
         self.http_status_icon = ft.Icon(
             ft.Icons.CIRCLE,
-            size=12,
+            size=10,
             color=ft.Colors.GREY_400,
+        )
+
+        self.http_status_text = ft.Text(
+            "已停止",
+            size=11,
+            color=ft.Colors.GREY_600,
         )
 
         self.http_switch = ft.Switch(
             value=False,
-            label="HTTP服务器",
-            label_position=ft.LabelPosition.LEFT,
             on_change=lambda e: self.app.run_async(self._http_switch_changed(e)),
-        )
-
-        self.open_browser_btn = ft.IconButton(
-            icon=ft.Icons.OPEN_IN_BROWSER,
-            icon_size=18,
-            tooltip="在浏览器中打开",
-            on_click=self._open_in_browser,
-            visible=False,
-            padding=4,
         )
 
         self.http_url_text = ft.Text(
             "",
-            size=12,
-            color=ft.Colors.BLUE_600,
+            size=11,
+            color=ft.Colors.BLUE_700,
             selectable=True,
-            expand=True,
-        )
-
-        self.disconnected_overlay = self._build_overlay()
-        self.loading_overlay = self._build_loading_overlay()
-
-        http_control_row = ft.Row([
-            self.http_status_icon,
-            self.http_switch,
-        ], spacing=4, alignment=ft.MainAxisAlignment.START)
-
-        self.url_container = ft.Container(
-            content=ft.Row([
-                self.http_url_text,
-                self.open_browser_btn,
-            ], spacing=4, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            padding=ft.Padding(left=8, right=8, top=4, bottom=4),
-            bgcolor=ft.Colors.BLUE_50,
-            border_radius=4,
             visible=False,
         )
 
-        left_panel = ft.Container(
-            content=ft.Column([
-                ft.Text("日志文件", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
-                ft.Container(height=8),
-                self._build_storage_info_card(),
-                ft.Container(height=12),
-                ft.Container(
-                    content=self.log_file_list,
-                    border=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-                    border_radius=6,
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
-                    expand=True,
-                ),
-            ], spacing=0, expand=True),
-            width=320,
-            padding=12,
-            bgcolor=ft.Colors.WHITE,
+        self.storage_info_text = ft.Text(
+            "存储类型: -- | 总容量: -- | 已用: -- | 可用: -- | 文件数: --",
+            size=12,
+            color=ft.Colors.ON_SURFACE_VARIANT,
         )
 
-        right_panel = ft.Container(
+        self.storage_usage_bar = ft.ProgressBar(
+            value=0,
+            bar_height=8,
+            border_radius=4,
+            color=ft.Colors.BLUE_500,
+            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
+        )
+
+        self.refresh_btn = ft.ElevatedButton(
+            "刷新",
+            icon=ft.Icons.REFRESH,
+            on_click=lambda e: self.safe_call("log_control.log_refresh", e),
+            bgcolor=ft.Colors.BLUE,
+            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=ft.padding.Padding(16, 0, 16, 0),
+                elevation=2,
+            ),
+        )
+
+        self.format_btn = ft.ElevatedButton(
+            "格式化",
+            icon=ft.Icons.STORAGE,
+            on_click=lambda e: self.safe_call("log_control.log_format", e),
+            bgcolor=ft.Colors.ORANGE,
+            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=ft.padding.Padding(16, 0, 16, 0),
+                elevation=2,
+            ),
+        )
+
+        self.level_label = ft.Text("INFO", size=13, color=ft.Colors.ON_SURFACE, text_align=ft.TextAlign.CENTER)
+
+        def _on_level_selected(e):
+            self._level_value = e.control.data
+            level_map = {"1": "ERROR", "2": "WARN", "3": "INFO", "4": "DEBUG", "5": "VERBOSE"}
+            self.level_label.value = level_map.get(self._level_value, "INFO")
+            self.safe_call("log_control.log_set_level", e)
+            self.app.page.update()
+
+        self.level_dropdown = ft.PopupMenuButton(
+            content=ft.Container(
+                content=ft.Row([
+                    ft.Text("级别:", size=13, color=ft.Colors.ON_SURFACE_VARIANT),
+                    self.level_label,
+                    ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=ft.Colors.ON_SURFACE_VARIANT),
+                ], spacing=4, alignment=ft.MainAxisAlignment.CENTER),
+                padding=ft.padding.Padding(12, 0, 8, 0),
+                height=32,
+                alignment=ft.alignment.Alignment(0, 0),
+                border=ft.border.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
+                border_radius=6,
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            ),
+            items=[
+                ft.PopupMenuItem(content=ft.Text("ERROR", size=13), data="1", on_click=_on_level_selected),
+                ft.PopupMenuItem(content=ft.Text("WARN", size=13), data="2", on_click=_on_level_selected),
+                ft.PopupMenuItem(content=ft.Text("INFO", size=13), data="3", on_click=_on_level_selected),
+                ft.PopupMenuItem(content=ft.Text("DEBUG", size=13), data="4", on_click=_on_level_selected),
+                ft.PopupMenuItem(content=ft.Text("VERBOSE", size=13), data="5", on_click=_on_level_selected),
+            ],
+        )
+
+        self.marker_input = ft.TextField(
+            hint_text="标记日志内容",
+            dense=True,
+            filled=True,
+            fill_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            border_color=ft.Colors.OUTLINE_VARIANT,
+            border_radius=6,
+            width=300,
+            text_size=13,
+            content_padding=ft.padding.Padding(12, 8, 12, 8),
+            on_submit=lambda e: self.safe_call("log_control.log_write_marker", e),
+        )
+
+        self.write_marker_btn = ft.ElevatedButton(
+            "写入",
+            icon=ft.Icons.EDIT_NOTE,
+            on_click=lambda e: self.safe_call("log_control.log_write_marker", e),
+            bgcolor=ft.Colors.TEAL,
+            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=ft.padding.Padding(16, 0, 16, 0),
+                elevation=2,
+            ),
+        )
+
+        self.open_browser_btn = ft.ElevatedButton(
+            "打开浏览器",
+            icon=ft.Icons.OPEN_IN_NEW,
+            on_click=lambda e: self.safe_call("log_control.log_open_browser", e),
+            visible=False,
+            bgcolor=ft.Colors.BLUE,
+            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=ft.padding.Padding(16, 0, 16, 0),
+                elevation=2,
+            ),
+        )
+
+        storage_card = ft.Container(
             content=ft.Column([
                 ft.Row([
-                    self.refresh_btn,
-                    ft.VerticalDivider(width=16),
-                    http_control_row,
-                ], spacing=10),
-                self.url_container,
-                ft.Container(height=12),
-                self.log_content_display,
-            ], spacing=0, expand=True),
-            padding=12,
+                    ft.Icon(ft.Icons.STORAGE, size=14, color=ft.Colors.BLUE_600),
+                    ft.Text("存储信息", size=13, weight=ft.FontWeight.W_600),
+                ], spacing=6),
+                ft.Container(height=4),
+                self.storage_info_text,
+                ft.Container(height=4),
+                self.storage_usage_bar,
+            ], spacing=0),
+            padding=8,
             bgcolor=ft.Colors.WHITE,
+            border_radius=6,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                top=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                right=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                bottom=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+            ),
+        )
+
+        http_control_card = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.HTTP, size=14, color=ft.Colors.BLUE_600),
+                ft.Text("日志HTTP服务", size=12, weight=ft.FontWeight.W_600),
+                self.http_status_icon,
+                self.http_status_text,
+                self.http_switch,
+                ft.Container(expand=True),
+                self.http_url_text,
+                self.open_browser_btn,
+            ], spacing=6),
+            padding=ft.padding.Padding(10, 2, 10, 2),
+            bgcolor=ft.Colors.WHITE,
+            border_radius=6,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                top=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                right=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                bottom=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+            ),
+        )
+
+        def _wrap(control):
+            """统一包装为32高度居中容器"""
+            return ft.Container(content=control, height=32, alignment=ft.alignment.Alignment(0, 0))
+
+        operations_card = ft.Container(
+            content=ft.Row([
+                _wrap(self.refresh_btn),
+                _wrap(self.format_btn),
+                self.level_dropdown,
+                _wrap(self.marker_input),
+                _wrap(self.write_marker_btn),
+            ], spacing=8, alignment=ft.MainAxisAlignment.START),
+            padding=8,
+            bgcolor=ft.Colors.WHITE,
+            border_radius=6,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                top=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                right=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                bottom=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+            ),
+        )
+
+        tips_card = ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.INFO, size=14, color=ft.Colors.BLUE_600),
+                    ft.Text("说明", size=13, weight=ft.FontWeight.W_600),
+                ], spacing=6),
+                ft.Container(height=4),
+                ft.Text("• 日志HTTP服务：启动后用浏览器访问下载日志", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text("• 日志级别：控制设备日志输出等级（ERROR/WARN/INFO/DEBUG/VERBOSE）", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text("• 写入标记：在设备日志中插入客户端标记，便于跨端对齐调试", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text("• 格式化：完全格式化存储分区（危险）", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+            ], spacing=2),
+            padding=8,
+            bgcolor=ft.Colors.WHITE,
+            border_radius=6,
+            border=ft.Border(
+                left=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                top=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                right=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                bottom=ft.BorderSide(width=1, color=ft.Colors.OUTLINE_VARIANT),
+            ),
+        )
+
+        content = ft.Container(
+            content=ft.Column([
+                storage_card,
+                http_control_card,
+                operations_card,
+                tips_card,
+            ], spacing=8, expand=True),
+            padding=8,
             expand=True,
+            bgcolor=ft.Colors.SURFACE_CONTAINER_LOWEST,
         )
 
         return ft.Stack([
-            ft.Row([
-                left_panel,
-                ft.VerticalDivider(width=1, color=ft.Colors.OUTLINE_VARIANT),
-                right_panel,
-            ], expand=True),
+            content,
             self.disconnected_overlay,
             self.loading_overlay,
         ], expand=True)
@@ -255,12 +330,16 @@ class LogTabComponent(BaseTabComponent):
         self._current_url = url if url else ""
         if running and url:
             self.http_status_icon.color = ft.Colors.GREEN
-            self.http_url_text.value = f"浏览器访问: {url}"
-            self.url_container.visible = True
+            self.http_status_text.value = "运行中"
+            self.http_status_text.color = ft.Colors.GREEN
+            self.http_url_text.value = url
+            self.http_url_text.visible = True
             self.open_browser_btn.visible = True
         else:
             self.http_status_icon.color = ft.Colors.GREY_400
+            self.http_status_text.value = "已停止"
+            self.http_status_text.color = ft.Colors.GREY_600
             self.http_url_text.value = ""
+            self.http_url_text.visible = False
             self._current_url = ""
-            self.url_container.visible = False
             self.open_browser_btn.visible = False

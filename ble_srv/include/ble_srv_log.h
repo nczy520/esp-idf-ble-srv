@@ -89,6 +89,7 @@ typedef struct __attribute__((packed)) {
     uint32_t free_size;
     uint32_t file_count;
     uint8_t storage_type;
+    uint8_t log_level;
 } ble_srv_log_storage_info_t;
 
 bool ble_srv_log_init(void);
@@ -111,11 +112,14 @@ typedef enum {
     BLE_SRV_LOG_HTTP_CMD_START = 1,
     BLE_SRV_LOG_HTTP_CMD_STATUS = 2,
     BLE_SRV_LOG_HTTP_CMD_WRITE_LOG = 3,
+    BLE_SRV_LOG_HTTP_CMD_FORMAT_LITTLEFS = 5,
+    BLE_SRV_LOG_HTTP_CMD_SET_LEVEL = 6,
 } ble_srv_log_http_cmd_t;
 
 bool ble_srv_log_http_start(void);
 void ble_srv_log_http_stop(void);
 bool ble_srv_log_http_is_running(void);
+bool ble_srv_log_format_littlefs(void);
 
 #define BLE_SRV_LOGE(tag, fmt, ...) ble_srv_log_write(BLE_SRV_LOG_LEVEL_ERROR, tag, fmt, ##__VA_ARGS__)
 #define BLE_SRV_LOGW(tag, fmt, ...) ble_srv_log_write(BLE_SRV_LOG_LEVEL_WARN, tag, fmt, ##__VA_ARGS__)

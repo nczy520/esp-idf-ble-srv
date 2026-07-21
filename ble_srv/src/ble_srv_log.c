@@ -49,8 +49,9 @@ static uint8_t *s_log_queue_storage = NULL;
 static StaticQueue_t s_log_queue_struct;
 static esp_timer_handle_t s_flush_timer = NULL;
 
-#define LOG_LOCK()   do { if (s_log_lock) xSemaphoreTake(s_log_lock, pdMS_TO_TICKS(1000)); } while(0)
-#define LOG_UNLOCK() do { if (s_log_lock) xSemaphoreGive(s_log_lock); } while(0)
+// LOG_LOCK 返回 true 表示成功获取锁；超时返回 false，调用方必须检查并直接 return
+#define LOG_LOCK()        (s_log_lock && xSemaphoreTake(s_log_lock, pdMS_TO_TICKS(1000)) == pdTRUE)
+#define LOG_UNLOCK()      do { if (s_log_lock) xSemaphoreGive(s_log_lock); } while(0)
 
 static void ble_srv_log_flush_timer_cb(void *arg);
 
@@ -287,6 +288,8 @@ static bool ble_srv_log_mount_sd(void)
 static void ble_srv_log_close_file(void)
 {
     if (s_log_file) {
+        fflush(s_log_file);
+        fsync(fileno(s_log_file));
         fclose(s_log_file);
         s_log_file = NULL;
     }
@@ -365,6 +368,9 @@ bool ble_srv_log_init(void)
     }
 
     ESP_LOGI(TAG, "Initializing log system");
+
+    setenv("TZ", CONFIG_BLE_SRV_NTP_TIMEZONE, 1);
+    tzset();
 
     s_boot_time_us = esp_timer_get_time();
 
@@ -454,9 +460,10 @@ void ble_srv_log_deinit(void)
 
     ble_srv_log_flush_queue();
 
-    LOG_LOCK();
-    ble_srv_log_close_file();
-    LOG_UNLOCK();
+    if (LOG_LOCK()) {
+        ble_srv_log_close_file();
+        LOG_UNLOCK();
+    }
 
     if (s_storage == BLE_SRV_LOG_STORAGE_LITTLEFS) {
         esp_vfs_littlefs_unregister(BLE_SRV_LOG_LITTLEFS_PARTITION);
@@ -554,7 +561,10 @@ void ble_srv_log_flush_queue(void)
     int batch_count = 0;
     const int MAX_BATCH = 64;
 
-    LOG_LOCK();
+    if (!LOG_LOCK()) {
+        // 拿不到锁（HTTP handler 正在持有），本次 flush 跳过，下次定时器再触发
+        return;
+    }
 
     while (batch_count < MAX_BATCH && xQueueReceive(s_log_queue, line, 0) == pdTRUE) {
         size_t len = strlen(line);
@@ -576,6 +586,7 @@ void ble_srv_log_flush_queue(void)
 
     if (batch_count > 0) {
         fflush(s_log_file);
+        fsync(fileno(s_log_file));
     }
 
     LOG_UNLOCK();
@@ -591,7 +602,9 @@ int ble_srv_log_get_file_list(ble_srv_log_file_info_t *files, int max_count)
         return 0;
     }
 
-    LOG_LOCK();
+    if (!LOG_LOCK()) {
+        return -1;
+    }
 
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char log_dir[64];
@@ -646,7 +659,9 @@ int ble_srv_log_read_file(const char *filename, char *buffer, int max_len)
         return -1;
     }
 
-    LOG_LOCK();
+    if (!LOG_LOCK()) {
+        return -1;
+    }
 
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char *filepath = heap_caps_malloc(256, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -686,7 +701,9 @@ int ble_srv_log_read_file_lines(const char *filename, int max_lines, char *buffe
         return -1;
     }
 
-    LOG_LOCK();
+    if (!LOG_LOCK()) {
+        return -1;
+    }
 
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char filepath[256];
@@ -749,7 +766,9 @@ bool ble_srv_log_delete_file(const char *filename)
         return false;
     }
 
-    LOG_LOCK();
+    if (!LOG_LOCK()) {
+        return false;
+    }
 
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char filepath[256];
@@ -775,6 +794,7 @@ bool ble_srv_log_get_storage_info(ble_srv_log_storage_info_t *info)
     }
 
     info->storage_type = (uint8_t)s_storage;
+    info->log_level = (uint8_t)s_log_level;
 
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
 
@@ -837,7 +857,10 @@ static esp_err_t log_http_index_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    LOG_LOCK();
+    if (!LOG_LOCK()) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
 
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     const char *storage_name = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? "SD Card" : "LittleFS";
@@ -1091,6 +1114,24 @@ static esp_err_t log_http_index_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t log_http_favicon_handler(httpd_req_t *req)
+{
+    const uint8_t favicon_png[] = {
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+        0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+        0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+        0x42, 0x60, 0x82,
+    };
+    httpd_resp_set_type(req, "image/png");
+    httpd_resp_send(req, (const char *)favicon_png, sizeof(favicon_png));
+    return ESP_OK;
+}
+
 static esp_err_t log_http_file_handler(httpd_req_t *req)
 {
     const char *uri = req->uri;
@@ -1110,15 +1151,14 @@ static esp_err_t log_http_file_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    LOG_LOCK();
-
+    // 注意：此处不持 s_log_lock。读的是用户指定的历史文件，
+    // 与 flush_queue 写入的活跃文件 s_log_file 无关；VFS FAT/LittleFS 自身线程安全。
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
     char filepath[384];
     snprintf(filepath, sizeof(filepath), "%s%s/%s", base_path, BLE_SRV_LOG_DIR, filename);
 
     FILE *f = fopen(filepath, "r");
     if (!f) {
-        LOG_UNLOCK();
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
@@ -1128,7 +1168,6 @@ static esp_err_t log_http_file_handler(httpd_req_t *req)
     char *buffer = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
     if (!buffer) {
         fclose(f);
-        LOG_UNLOCK();
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
@@ -1141,7 +1180,6 @@ static esp_err_t log_http_file_handler(httpd_req_t *req)
 
     fclose(f);
     heap_caps_free(buffer);
-    LOG_UNLOCK();
 
     return ESP_OK;
 }
@@ -1179,9 +1217,15 @@ bool ble_srv_log_http_start(void)
         .method = HTTP_GET,
         .handler = log_http_file_handler,
     };
+    httpd_uri_t favicon_uri = {
+        .uri = "/favicon.ico",
+        .method = HTTP_GET,
+        .handler = log_http_favicon_handler,
+    };
 
     httpd_register_uri_handler(s_http_server, &index_uri);
     httpd_register_uri_handler(s_http_server, &file_uri);
+    httpd_register_uri_handler(s_http_server, &favicon_uri);
 
     ESP_LOGI(TAG, "HTTP server started on port %d", BLE_SRV_LOG_HTTP_PORT);
     return true;
@@ -1199,5 +1243,67 @@ void ble_srv_log_http_stop(void)
 bool ble_srv_log_http_is_running(void)
 {
     return s_http_server != NULL;
+}
+
+bool ble_srv_log_format_littlefs(void)
+{
+    if (!s_initialized || s_storage != BLE_SRV_LOG_STORAGE_LITTLEFS) {
+        return false;
+    }
+
+    if (!LOG_LOCK()) {
+        return false;
+    }
+
+    if (s_log_file) {
+        fflush(s_log_file);
+        fclose(s_log_file);
+        s_log_file = NULL;
+    }
+
+    esp_vfs_littlefs_unregister(BLE_SRV_LOG_LITTLEFS_PARTITION);
+
+    esp_err_t ret = esp_littlefs_format(BLE_SRV_LOG_LITTLEFS_PARTITION);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to format LittleFS: %s", esp_err_to_name(ret));
+        LOG_UNLOCK();
+        return false;
+    }
+
+    esp_vfs_littlefs_conf_t conf = {
+        .base_path = BLE_SRV_LOG_LITTLEFS_PATH,
+        .partition_label = BLE_SRV_LOG_LITTLEFS_PARTITION,
+        .format_if_mount_failed = true,
+        .dont_mount = false,
+    };
+
+    ret = esp_vfs_littlefs_register(&conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to re-mount LittleFS: %s", esp_err_to_name(ret));
+        LOG_UNLOCK();
+        return false;
+    }
+
+    char log_dir[64];
+    snprintf(log_dir, sizeof(log_dir), "%s%s", BLE_SRV_LOG_LITTLEFS_PATH, BLE_SRV_LOG_DIR);
+    mkdir(log_dir, 0755);
+
+    /* 格式化后重置NVS日志文件计数器，使文件名从 000001.log 重新开始 */
+    {
+        nvs_handle_t handle;
+        esp_err_t err = nvs_open(BLE_SRV_LOG_NVS_NAMESPACE, NVS_READWRITE, &handle);
+        if (err == ESP_OK) {
+            nvs_set_u32(handle, BLE_SRV_LOG_NVS_KEY_COUNT, 0);
+            nvs_commit(handle);
+            nvs_close(handle);
+        }
+    }
+
+    ble_srv_log_open_new_file();
+
+    LOG_UNLOCK();
+
+    ESP_LOGI(TAG, "LittleFS formatted successfully");
+    return true;
 }
 

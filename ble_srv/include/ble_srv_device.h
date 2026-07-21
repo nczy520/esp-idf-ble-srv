@@ -18,16 +18,12 @@ extern "C" {
 #define BLE_SRV_AUTH_CHAR_UUID        0xFFE8
 #define BLE_SRV_LOG_CHAR_UUID         0xFFE9
 #define BLE_SRV_CUSTOM_CMD_CHAR_UUID  0xFFEA
-#define BLE_SRV_LOG_FILE_LIST_CHAR_UUID   0xFFEB
-#define BLE_SRV_LOG_FILE_CONTENT_CHAR_UUID 0xFFEC
-#define BLE_SRV_LOG_FILE_DOWNLOAD_CHAR_UUID 0xFFED
 #define BLE_SRV_LOG_HTTP_CTRL_CHAR_UUID 0xFFEE
 #define BLE_SRV_LOG_STORAGE_CHAR_UUID  0xFFEF
 
 #define BLE_SRV_AUTH_PIN_MAX_LEN      16
 #define BLE_SRV_AUTH_ERR_NOT_AUTH     0x80
 #define BLE_SRV_LOG_MAX_LEN           200
-#define BLE_SRV_LOG_FILE_LIST_MAX     20
 
 typedef enum {
     BLE_SRV_CMD_GET_INFO = 0x01,
@@ -49,6 +45,7 @@ typedef struct __attribute__((packed)) {
     char flash_size[16];
     char mac_address[18];
     char version[32];
+    uint32_t current_time;
 } ble_srv_device_info_t;
 
 typedef struct __attribute__((packed)) {

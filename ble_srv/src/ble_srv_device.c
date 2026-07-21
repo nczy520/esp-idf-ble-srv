@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_mac.h"
@@ -95,10 +96,14 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
     info->reset_reason = (uint8_t)esp_reset_reason();
     info->uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000);
 
-    ESP_LOGI(TAG, "Device: %s, Flash: %s, MAC: %s, Ver: %s, CPU: %luMHz/%d cores, Temp: %.2f°C, Uptime: %lus, Reset: %d",
+    time_t now;
+    time(&now);
+    info->current_time = (uint32_t)now;
+
+    ESP_LOGI(TAG, "Device: %s, Flash: %s, MAC: %s, Ver: %s, CPU: %luMHz/%d cores, Temp: %.2f°C, Uptime: %lus, Reset: %d, Time: %lu",
              info->chip_name, info->flash_size, info->mac_address,
              info->version, (unsigned long)info->cpu_freq_mhz, info->cpu_cores, info->temperature_celsius,
-             (unsigned long)info->uptime_seconds, info->reset_reason);
+             (unsigned long)info->uptime_seconds, info->reset_reason, (unsigned long)info->current_time);
 
     return true;
 }

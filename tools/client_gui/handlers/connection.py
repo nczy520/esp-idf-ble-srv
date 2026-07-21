@@ -125,6 +125,11 @@ class ConnectionHandler(BaseHandler):
                 btn.tooltip = "连接此设备"
                 btn.disabled = False
         
+        # 更新日志页面按钮状态
+        handlers = getattr(self.app, 'handlers', None)
+        if handlers and hasattr(handlers, 'log_control') and handlers.log_control:
+            handlers.log_control.update_buttons_state()
+        
         self.safe_update()
 
     def _get_rssi_color(self, rssi):

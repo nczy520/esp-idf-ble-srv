@@ -3,7 +3,7 @@ BLE设备数据结构模型
 """
 
 import struct
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import Optional
 
 class OTAState:
@@ -55,8 +55,8 @@ class DeviceInfo:
     }
 
     def __init__(self, data: bytes) -> None:
-        if len(data) < 129:
-            raise ValueError(f"DeviceInfo requires at least 129 bytes, got {len(data)}")
+        if len(data) < 133:
+            raise ValueError(f"DeviceInfo requires at least 133 bytes, got {len(data)}")
         self.cpu_freq_mhz: int = struct.unpack('<I', data[0:4])[0]
         self.uptime_seconds: int = struct.unpack('<I', data[4:8])[0]
         self.temperature_celsius: float = struct.unpack('<f', data[8:12])[0]
@@ -68,6 +68,7 @@ class DeviceInfo:
         self.flash_size: str = struct.unpack('<16s', data[63:79])[0].decode('utf-8', errors='replace').strip('\x00')
         self.mac_address: str = struct.unpack('<18s', data[79:97])[0].decode('utf-8', errors='replace').strip('\x00')
         self.version: str = struct.unpack('<32s', data[97:129])[0].decode('utf-8', errors='replace').strip('\x00')
+        self.current_time: int = struct.unpack('<I', data[129:133])[0]
 
     def get_reset_reason_name(self) -> str:
         return self.RESET_REASONS.get(self.reset_reason, f"未知({self.reset_reason})")
@@ -83,6 +84,11 @@ class DeviceInfo:
             result += "\n温度: 不支持"
         uptime = timedelta(seconds=self.uptime_seconds)
         result += f"\n运行时间: {uptime}\n上次重启原因: {self.get_reset_reason_name()}"
+        if self.current_time > 0:
+            dt = datetime.fromtimestamp(self.current_time)
+            result += f"\n设备时间: {dt.strftime('%Y-%m-%d %H:%M:%S')}"
+        else:
+            result += "\n设备时间: 未同步"
         return result
 
 class MemoryInfo:
@@ -331,6 +337,7 @@ class LogStorageInfo:
         self.free_size: int = struct.unpack('<I', data[8:12])[0]
         self.file_count: int = struct.unpack('<I', data[12:16])[0]
         self.storage_type: int = struct.unpack('<B', data[16:17])[0]
+        self.log_level: int = struct.unpack('<B', data[17:18])[0] if len(data) >= 18 else 3
 
     @staticmethod
     def _fmt_size(val: int) -> str:

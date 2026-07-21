@@ -66,15 +66,14 @@ from client.constants import (
     BLE_OTA_URL_CMD_START_URL,
     BLE_OTA_URL_CMD_START_DEFAULT,
     BLE_OTA_URL_CMD_ABORT,
-    BLE_DM_LOG_FILE_LIST_CHAR_UUID,
-    BLE_DM_LOG_FILE_CONTENT_CHAR_UUID,
-    BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID,
     BLE_DM_LOG_HTTP_CTRL_CHAR_UUID,
     BLE_DM_LOG_STORAGE_CHAR_UUID,
     BLE_LOG_HTTP_CMD_STOP,
     BLE_LOG_HTTP_CMD_START,
     BLE_LOG_HTTP_CMD_STATUS,
     BLE_LOG_HTTP_CMD_WRITE_LOG,
+    BLE_LOG_HTTP_CMD_FORMAT_LITTLEFS,
+    BLE_LOG_HTTP_CMD_SET_LEVEL,
     parse_esp_fw_version,
 )
 from client.models import (
@@ -1171,74 +1170,6 @@ class BleCore:
         except Exception as e:
             print(f"[BLE] OTA status handler error: {e}")
 
-    async def get_log_file_list(self):
-        """获取日志文件列表，返回 [{"name":..., "size":..., "mtime":...}, ...]"""
-        import struct as _struct
-        data = await self._read_gatt(BLE_DM_LOG_FILE_LIST_CHAR_UUID)
-        if not data or len(data) < 1:
-            return []
-        count = data[0]
-        if count == 0:
-            return []
-        files = []
-        offset = 1
-        entry_size = 16 + 4 + 4  # name[16] + size(u32) + mtime(u32) = 24
-        for i in range(count):
-            if offset + entry_size > len(data):
-                break
-            name_bytes = data[offset:offset + 16]
-            name = name_bytes.split(b'\x00')[0].decode('utf-8', errors='replace')
-            size, mtime = _struct.unpack_from('<II', data, offset + 16)
-            files.append({"name": name, "size": size, "mtime": mtime})
-            offset += entry_size
-        self._log(f"获取到 {len(files)} 个日志文件", "rx")
-        return files
-
-    async def select_log_file(self, filename):
-        """选择日志文件（写入文件名到content特征）"""
-        name_bytes = filename.encode('utf-8')[:63]
-        await self._write_gatt(BLE_DM_LOG_FILE_CONTENT_CHAR_UUID, name_bytes)
-        self._log(f"已选择日志文件: {filename}", "tx")
-        return True
-
-    async def read_log_file(self):
-        """读取已选择的日志文件内容（最多1024字节）"""
-        data = await self._read_gatt(BLE_DM_LOG_FILE_CONTENT_CHAR_UUID)
-        if not data:
-            return None
-        content = data.decode('utf-8', errors='replace')
-        self._log(f"读取日志内容: {len(data)} bytes", "rx")
-        return content
-
-    async def download_log_file(self, filename, save_path):
-        """通过BLE下载日志文件（通知模式，每次512字节）"""
-        await self.select_log_file(filename)
-        received_data = bytearray()
-        done_event = asyncio.Event()
-
-        def _on_download_notify(sender, data: bytearray):
-            received_data.extend(data)
-            if len(data) < 512:
-                done_event.set()
-
-        try:
-            await self.ble_client.start_notify(BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID, _on_download_notify)
-            await self.ble_client.write_gatt_char(BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID, b'\x01')
-            try:
-                await asyncio.wait_for(done_event.wait(), timeout=10.0)
-            except asyncio.TimeoutError:
-                pass
-            await self.ble_client.stop_notify(BLE_DM_LOG_FILE_DOWNLOAD_CHAR_UUID)
-            if received_data:
-                with open(save_path, 'wb') as f:
-                    f.write(bytes(received_data))
-                self._log(f"日志文件已下载: {filename} ({len(received_data)} bytes)", "success")
-                return True
-            return False
-        except Exception as e:
-            self._log(f"下载日志文件失败: {e}", "error")
-            return False
-
     async def log_http_start(self):
         """启动日志HTTP服务器"""
         await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, bytes([BLE_LOG_HTTP_CMD_START]))
@@ -1283,5 +1214,24 @@ class BleCore:
             self._log(f"存储信息原始数据 ({len(data)} bytes): {data.hex()}", "debug")
             return LogStorageInfo(data)
         return None
+
+    async def log_format_littlefs(self):
+        """格式化LittleFS分区"""
+        await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, bytes([BLE_LOG_HTTP_CMD_FORMAT_LITTLEFS]))
+        self._log("已发送格式化LittleFS命令", "tx")
+        return True
+
+    async def log_set_level(self, level):
+        """设置日志级别 (0=NONE 1=ERROR 2=WARN 3=INFO 4=DEBUG 5=VERBOSE)"""
+        await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, bytes([BLE_LOG_HTTP_CMD_SET_LEVEL, level]))
+        self._log(f"已发送设置日志级别命令: {level}", "tx")
+        return True
+
+    async def log_write_marker(self, msg):
+        """写入客户端标记日志"""
+        data = bytes([BLE_LOG_HTTP_CMD_WRITE_LOG]) + msg.encode("utf-8")
+        await self._write_gatt(BLE_DM_LOG_HTTP_CTRL_CHAR_UUID, data)
+        self._log(f"已写入标记日志: {msg}", "tx")
+        return True
 
 

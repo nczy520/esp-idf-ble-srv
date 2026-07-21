@@ -122,12 +122,6 @@ class GuiHandlers:
         self.wifi_control.wifi_ntp(event)
 
     # === 日志控制（委托给LogControlHandler）===
-    def refresh_log_list(self, event=None):
-        self.log_control.refresh_log_list()
-
-    def download_log_file(self, event=None):
-        pass
-
     # === OTA升级（委托给OTAControlHandler）===
     def pick_firmware(self, event=None):
         self.ota_control.pick_firmware(event)

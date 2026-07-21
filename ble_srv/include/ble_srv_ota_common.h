@@ -91,6 +91,9 @@ bool ble_srv_ota_get_status(ble_ota_status_t *status);
 
 void ble_srv_ota_register_status_cb(ble_srv_status_cb_t cb);
 
+void ble_srv_ota_reset_to_idle(void);
+void ble_srv_ota_push_status_internal(void);
+
 #ifdef __cplusplus
 }
 #endif

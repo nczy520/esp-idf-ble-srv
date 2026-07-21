@@ -1,10 +1,12 @@
 #include "ble_srv.h"
+#include "ble_srv_core.h"
 #include "ble_srv_gatt.h"
 #include "ble_srv_ota_common.h"
 #include "ble_srv_ota_bt.h"
 #include "ble_srv_ota_url.h"
 #include "ble_srv_led.h"
 #include "ble_srv_temp_sensor.h"
+#include "ble_srv_msg.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,13 +36,9 @@ static const char *TAG = "BLE_SRV";
 static volatile uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static volatile bool s_advertising = false;
 static uint8_t s_own_addr_type = 0;
-static SemaphoreHandle_t s_state_lock = NULL;
 
 static char s_device_name[64] = {0};
 static TimerHandle_t s_restart_timer = NULL;
-
-#define STATE_LOCK()   do { if (s_state_lock) xSemaphoreTake(s_state_lock, portMAX_DELAY); } while(0)
-#define STATE_UNLOCK() do { if (s_state_lock) xSemaphoreGive(s_state_lock); } while(0)
 
 static void restart_timer_cb(TimerHandle_t timer)
 {
@@ -58,13 +56,10 @@ static void ble_srv_start_advertising(void)
     struct ble_gap_adv_params adv_params;
     int rc;
 
-    STATE_LOCK();
     if (s_advertising) {
-        STATE_UNLOCK();
         ESP_LOGW(TAG, "Already advertising");
         return;
     }
-    STATE_UNLOCK();
 
     memset(&adv_fields, 0, sizeof(adv_fields));
     adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
@@ -103,19 +98,15 @@ static void ble_srv_start_advertising(void)
 
     rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER,
                            &adv_params, ble_srv_gap_event_handler, NULL);
-    STATE_LOCK();
     if (rc == 0) {
         s_advertising = true;
-        STATE_UNLOCK();
         ESP_LOGI(TAG, "BLE advertising started");
         BLE_SRV_LOGI(TAG, "BLE advertising started");
     } else if (rc == BLE_HS_EALREADY) {
         s_advertising = true;
-        STATE_UNLOCK();
         ESP_LOGW(TAG, "BLE already advertising");
         BLE_SRV_LOGW(TAG, "BLE already advertising");
     } else {
-        STATE_UNLOCK();
         ESP_LOGE(TAG, "ble_gap_adv_start failed: rc=%d", rc);
         BLE_SRV_LOGE(TAG, "ble_gap_adv_start failed: rc=%d", rc);
     }
@@ -127,84 +118,116 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         ESP_LOGI(TAG, "CONNECT: status=%d", event->connect.status);
         BLE_SRV_LOGI(TAG, "CONNECT: status=%d", event->connect.status);
-        STATE_LOCK();
         if (event->connect.conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-            s_conn_handle = event->connect.conn_handle;
-            s_advertising = false;
-            STATE_UNLOCK();
-            ble_srv_gatt_clear_auth_state(event->connect.conn_handle);
-            ble_srv_gatt_set_log_conn_handle(event->connect.conn_handle);
+            ble_srv_msg_send(MSG_GAP_CONNECT, NULL, 0, 0,
+                             event->connect.conn_handle, 0);
         } else {
-            STATE_UNLOCK();
-            ble_srv_start_advertising();
+            ble_srv_msg_send(MSG_GAP_ADV_COMPLETE, NULL, 0, 0, 0, 0);
         }
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
         BLE_SRV_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
-        STATE_LOCK();
-        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-        s_advertising = false;
-        STATE_UNLOCK();
-        ble_srv_gatt_clear_auth_state(event->disconnect.conn.conn_handle);
-        ble_srv_gatt_set_log_conn_handle(BLE_HS_CONN_HANDLE_NONE);
-        ble_srv_gatt_set_log_notify_enabled(false);
-        ble_srv_gatt_set_ota_status_notify_enabled(false);
-        ble_srv_gatt_set_wifi_status_notify_enabled(false);
-        ble_srv_ota_abort(BLE_OTA_ERR_DISCONNECTED);
-#ifdef CONFIG_BLE_SRV_LED_ENABLED
-        ble_srv_led_set_on(false);
-#endif
-        ble_srv_start_advertising();
+        ble_srv_msg_send(MSG_GAP_DISCONNECT, NULL, 0, 0,
+                         event->disconnect.conn.conn_handle, 0);
         break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        STATE_LOCK();
-        s_advertising = false;
-        STATE_UNLOCK();
-        ble_srv_start_advertising();
+        ble_srv_msg_send(MSG_GAP_ADV_COMPLETE, NULL, 0, 0, 0, 0);
         break;
 
-    case BLE_GAP_EVENT_SUBSCRIBE:
+    case BLE_GAP_EVENT_SUBSCRIBE: {
         ESP_LOGI(TAG, "SUBSCRIBE: attr=%d, notify=%d",
                  event->subscribe.attr_handle, event->subscribe.cur_notify);
         BLE_SRV_LOGI(TAG, "SUBSCRIBE: attr=%d, notify=%d",
                       event->subscribe.attr_handle, event->subscribe.cur_notify);
-        if (event->subscribe.attr_handle == ble_srv_gatt_get_ota_status_chr_val_handle()) {
-            ble_srv_gatt_set_ota_status_notify_enabled(event->subscribe.cur_notify);
-        }
-#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
-        else if (event->subscribe.attr_handle == ble_srv_gatt_get_wifi_status_chr_val_handle()) {
-            ble_srv_gatt_set_wifi_status_notify_enabled(event->subscribe.cur_notify);
-        }
-#endif
-        else if (event->subscribe.attr_handle == ble_srv_gatt_get_log_chr_val_handle()) {
-            ble_srv_gatt_set_log_notify_enabled(event->subscribe.cur_notify);
-            if (event->subscribe.cur_notify) {
-                ble_srv_gatt_set_log_conn_handle(event->subscribe.conn_handle);
-            }
-            ESP_LOGI(TAG, "LOG notify %s (conn=%d)",
-                     event->subscribe.cur_notify ? "enabled" : "disabled",
-                     event->subscribe.conn_handle);
-        }
-        else if (event->subscribe.attr_handle == ble_srv_gatt_get_custom_cmd_chr_val_handle()) {
-            ble_srv_gatt_set_custom_cmd_notify_enabled(event->subscribe.cur_notify);
-            ESP_LOGI(TAG, "Custom cmd notify %s (conn=%d)",
-                     event->subscribe.cur_notify ? "enabled" : "disabled",
-                     event->subscribe.conn_handle);
-        }
+        uint8_t data[2] = {(uint8_t)(event->subscribe.cur_notify ? 1 : 0), 0};
+        ble_srv_msg_send(MSG_GAP_SUBSCRIBE, data, 2,
+                         event->subscribe.attr_handle, event->subscribe.conn_handle, 0);
         break;
+    }
 
-    case BLE_GAP_EVENT_MTU:
+    case BLE_GAP_EVENT_MTU: {
         ESP_LOGI(TAG, "MTU: conn=%d, mtu=%d",
                  event->mtu.conn_handle, event->mtu.value);
+        uint16_t mtu = event->mtu.value;
+        ble_srv_msg_send(MSG_GAP_MTU, (uint8_t *)&mtu, sizeof(mtu), 0,
+                         event->mtu.conn_handle, 0);
         break;
+    }
 
     default:
         break;
     }
     return 0;
+}
+
+void ble_srv_core_handle_connect(uint16_t conn_handle)
+{
+    s_conn_handle = conn_handle;
+    s_advertising = false;
+    ble_srv_gatt_clear_auth_state(conn_handle);
+    ble_srv_gatt_set_log_conn_handle(conn_handle);
+}
+
+void ble_srv_core_handle_disconnect(uint16_t conn_handle)
+{
+    (void)conn_handle;
+    s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    s_advertising = false;
+    ble_srv_gatt_clear_auth_state(conn_handle);
+    ble_srv_gatt_set_log_conn_handle(BLE_HS_CONN_HANDLE_NONE);
+    ble_srv_gatt_set_log_notify_enabled(false);
+    ble_srv_gatt_set_ota_status_notify_enabled(false);
+    ble_srv_gatt_set_wifi_status_notify_enabled(false);
+    ble_srv_ota_abort(BLE_OTA_ERR_DISCONNECTED);
+#ifdef CONFIG_BLE_SRV_LED_ENABLED
+    ble_srv_led_set_on(false);
+#endif
+    ble_srv_start_advertising();
+}
+
+void ble_srv_core_handle_adv_complete(void)
+{
+    s_advertising = false;
+    ble_srv_start_advertising();
+}
+
+void ble_srv_core_handle_subscribe(uint16_t attr_handle, uint16_t conn_handle,
+                                    const uint8_t *data, uint16_t data_len)
+{
+    (void)conn_handle;
+    (void)data_len;
+    bool notify = data && data[0];
+
+    if (attr_handle == ble_srv_gatt_get_ota_status_chr_val_handle()) {
+        ble_srv_gatt_set_ota_status_notify_enabled(notify);
+    }
+#ifdef CONFIG_BLE_SRV_WIFI_ENABLED
+    else if (attr_handle == ble_srv_gatt_get_wifi_status_chr_val_handle()) {
+        ble_srv_gatt_set_wifi_status_notify_enabled(notify);
+    }
+#endif
+    else if (attr_handle == ble_srv_gatt_get_log_chr_val_handle()) {
+        ble_srv_gatt_set_log_notify_enabled(notify);
+        if (notify) {
+            ble_srv_gatt_set_log_conn_handle(conn_handle);
+        }
+        ESP_LOGI(TAG, "LOG notify %s (conn=%d)",
+                 notify ? "enabled" : "disabled", conn_handle);
+    }
+    else if (attr_handle == ble_srv_gatt_get_custom_cmd_chr_val_handle()) {
+        ble_srv_gatt_set_custom_cmd_notify_enabled(notify);
+        ESP_LOGI(TAG, "Custom cmd notify %s (conn=%d)",
+                 notify ? "enabled" : "disabled", conn_handle);
+    }
+}
+
+void ble_srv_core_handle_mtu(uint16_t conn_handle, uint16_t mtu)
+{
+    (void)conn_handle;
+    (void)mtu;
 }
 
 static void ble_srv_on_sync(void)
@@ -266,24 +289,22 @@ bool ble_srv_init(void)
         return false;
     }
 
-    s_state_lock = xSemaphoreCreateMutex();
-    if (!s_state_lock) {
-        ESP_LOGE(TAG, "Failed to create state lock");
+    if (!ble_srv_msg_init()) {
+        ESP_LOGE(TAG, "Failed to initialize message framework");
         return false;
     }
 
-    if (!ble_srv_gatt_init_lock()) {
-        ESP_LOGE(TAG, "Failed to create GATT lock");
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
+    if (!ble_srv_gatt_init()) {
+        ESP_LOGE(TAG, "Failed to initialize GATT");
+        ble_srv_msg_deinit();
         return false;
     }
 
     ret = nimble_port_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
+        ble_srv_gatt_deinit();
+        ble_srv_msg_deinit();
         return false;
     }
 
@@ -308,8 +329,7 @@ bool ble_srv_init(void)
         ESP_LOGE(TAG, "ble_gatts_count_cfg failed: rc=%d", rc);
         nimble_port_deinit();
         ble_srv_gatt_deinit();
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
+        ble_srv_msg_deinit();
         return false;
     }
 
@@ -318,31 +338,32 @@ bool ble_srv_init(void)
         ESP_LOGE(TAG, "ble_gatts_add_svcs failed: rc=%d", rc);
         nimble_port_deinit();
         ble_srv_gatt_deinit();
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
+        ble_srv_msg_deinit();
         return false;
     }
+
+    ble_srv_task_start();
 
     nimble_port_freertos_init(ble_srv_host_task);
 
     if (!ble_srv_ota_init()) {
         ESP_LOGE(TAG, "Failed to initialize OTA common");
+        ble_srv_task_stop();
         nimble_port_stop();
         nimble_port_deinit();
         ble_srv_gatt_deinit();
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
+        ble_srv_msg_deinit();
         return false;
     }
 
     if (!ble_srv_ota_bt_init()) {
         ESP_LOGE(TAG, "Failed to initialize BT OTA");
         ble_srv_ota_deinit();
+        ble_srv_task_stop();
         nimble_port_stop();
         nimble_port_deinit();
         ble_srv_gatt_deinit();
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
+        ble_srv_msg_deinit();
         return false;
     }
 
@@ -356,11 +377,11 @@ bool ble_srv_init(void)
         ble_srv_ota_url_deinit();
         ble_srv_ota_bt_deinit();
         ble_srv_ota_deinit();
+        ble_srv_task_stop();
         nimble_port_stop();
         nimble_port_deinit();
         ble_srv_gatt_deinit();
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
+        ble_srv_msg_deinit();
         return false;
     }
 #endif
@@ -397,10 +418,10 @@ void ble_srv_deinit(void)
 
     ble_srv_gatt_deinit();
 
-    STATE_LOCK();
+    ble_srv_task_stop();
+
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_advertising = false;
-    STATE_UNLOCK();
 
     if (s_restart_timer) {
         xTimerStop(s_restart_timer, 0);
@@ -408,31 +429,22 @@ void ble_srv_deinit(void)
         s_restart_timer = NULL;
     }
 
-    if (s_state_lock) {
-        vSemaphoreDelete(s_state_lock);
-        s_state_lock = NULL;
-    }
+    ble_srv_msg_deinit();
 }
 
 bool ble_srv_is_connected(void)
 {
-    STATE_LOCK();
-    bool connected = (s_conn_handle != BLE_HS_CONN_HANDLE_NONE);
-    STATE_UNLOCK();
-    return connected;
+    return (s_conn_handle != BLE_HS_CONN_HANDLE_NONE);
 }
 
 uint16_t ble_srv_get_conn_handle(void)
 {
-    STATE_LOCK();
-    uint16_t handle = s_conn_handle;
-    STATE_UNLOCK();
-    return handle;
+    return s_conn_handle;
 }
 
-void ble_srv_schedule_restart(uint32_t delay_ms)
+void ble_srv_schedule_restart_internal(uint32_t delay_ms)
 {
-    BLE_SRV_LOGI(TAG, "Device restart scheduled in %lu ms", (unsigned long)delay_ms);
+    BLE_SRV_LOGI(TAG, "Device restart scheduled in %lu ms (internal)", (unsigned long)delay_ms);
 
     if (!s_restart_timer) {
         s_restart_timer = xTimerCreate("srv_rboot", pdMS_TO_TICKS(delay_ms),
@@ -450,4 +462,9 @@ void ble_srv_schedule_restart(uint32_t delay_ms)
     }
     xTimerReset(s_restart_timer, 0);
     xTimerStart(s_restart_timer, 0);
+}
+
+void ble_srv_schedule_restart(uint32_t delay_ms)
+{
+    ble_srv_msg_send(MSG_SCHEDULE_RESTART, (uint8_t *)&delay_ms, sizeof(delay_ms), 0, 0, 0);
 }

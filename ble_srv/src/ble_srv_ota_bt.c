@@ -1,6 +1,7 @@
 #include "ble_srv_ota_bt.h"
 #include "ble_srv_ota_common.h"
 #include "ble_srv_gatt.h"
+#include "ble_srv_msg.h"
 #include "ble_srv.h"
 #include "ble_srv_log.h"
 #include <string.h>
@@ -61,7 +62,6 @@ static inline uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t le
     return crc;
 }
 
-static SemaphoreHandle_t s_bt_lock = NULL;
 static bool s_initialized = false;
 
 static uint8_t s_gen = BLE_OTA_INVALID_GEN;
@@ -78,10 +78,7 @@ static uint32_t s_write_buf_len = 0;
 static uint16_t s_packet_count = 0;
 static bool s_receiving = false;
 
-#define BT_LOCK()   do { if (s_bt_lock) xSemaphoreTakeRecursive(s_bt_lock, portMAX_DELAY); } while(0)
-#define BT_UNLOCK() do { if (s_bt_lock) xSemaphoreGiveRecursive(s_bt_lock); } while(0)
-
-static void bt_cleanup_locked(void)
+static void bt_cleanup(void)
 {
     s_receiving = false;
     s_packet_count = 0;
@@ -102,20 +99,16 @@ static void bt_cleanup_locked(void)
 
 static void bt_flush_and_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error)
 {
-    BT_LOCK();
-    bt_cleanup_locked();
+    bt_cleanup();
     s_gen = BLE_OTA_INVALID_GEN;
-    BT_UNLOCK();
     ble_srv_ota_finish(gen, result, error);
 }
 
 void ble_srv_ota_bt_handle_abort(void)
 {
-    BT_LOCK();
     uint8_t gen = s_gen;
     bool is_bt_mode = (ble_srv_ota_get_mode() == BLE_OTA_MODE_BT);
     bool gen_valid = (gen != BLE_OTA_INVALID_GEN) && ble_srv_ota_gen_valid(gen);
-    BT_UNLOCK();
 
     if (!is_bt_mode || !gen_valid) {
         return;
@@ -132,12 +125,6 @@ bool ble_srv_ota_bt_init(void)
         return true;
     }
 
-    s_bt_lock = xSemaphoreCreateRecursiveMutex();
-    if (!s_bt_lock) {
-        ESP_LOGE(TAG, "Failed to create BT OTA lock");
-        return false;
-    }
-
     s_write_buf = heap_caps_malloc(BLE_SRV_WRITE_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_write_buf) {
         ESP_LOGW(TAG, "PSRAM alloc failed for %d bytes, trying internal RAM", BLE_SRV_WRITE_BUF_SIZE);
@@ -145,12 +132,9 @@ bool ble_srv_ota_bt_init(void)
     }
     if (!s_write_buf) {
         ESP_LOGE(TAG, "Failed to allocate OTA write buffer (%d bytes)", BLE_SRV_WRITE_BUF_SIZE);
-        vSemaphoreDelete(s_bt_lock);
-        s_bt_lock = NULL;
         return false;
     }
 
-    BT_LOCK();
     s_receiving = false;
     s_gen = BLE_OTA_INVALID_GEN;
     s_ota_handle = 0;
@@ -162,7 +146,6 @@ bool ble_srv_ota_bt_init(void)
     s_fw_bytes_written = 0;
     s_total_received = 0;
     s_packet_count = 0;
-    BT_UNLOCK();
 
     s_initialized = true;
     ESP_LOGI(TAG, "BT OTA initialized, write buffer=%d bytes", BLE_SRV_WRITE_BUF_SIZE);
@@ -179,19 +162,12 @@ void ble_srv_ota_bt_deinit(void)
         ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
     }
 
-    BT_LOCK();
-    bt_cleanup_locked();
+    bt_cleanup();
     s_gen = BLE_OTA_INVALID_GEN;
-    BT_UNLOCK();
 
     if (s_write_buf) {
         heap_caps_free(s_write_buf);
         s_write_buf = NULL;
-    }
-
-    if (s_bt_lock) {
-        vSemaphoreDelete(s_bt_lock);
-        s_bt_lock = NULL;
     }
 
     s_initialized = false;
@@ -210,7 +186,6 @@ static bool handle_start(const uint8_t *data, uint16_t len)
         return false;
     }
 
-    BT_LOCK();
     s_gen = gen;
 
     const ble_ota_bt_start_req_t *req = (const ble_ota_bt_start_req_t *)data;
@@ -230,9 +205,8 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     if (s_fw_total_size == 0 || s_fw_total_size > BLE_OTA_MAX_FW_SIZE) {
         ESP_LOGE(TAG, "Invalid fw size: %lu", (unsigned long)s_fw_total_size);
         BLE_SRV_LOGE(TAG, "Start fail: invalid size %lu", (unsigned long)s_fw_total_size);
-        bt_cleanup_locked();
+        bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
-        BT_UNLOCK();
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INVALID_SIZE);
         return false;
     }
@@ -241,9 +215,8 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     if (!s_target_partition) {
         ESP_LOGE(TAG, "No update partition");
         BLE_SRV_LOGE(TAG, "Start fail: no update partition");
-        bt_cleanup_locked();
+        bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
-        BT_UNLOCK();
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_NO_PARTITION);
         return false;
     }
@@ -268,16 +241,14 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(ret));
         BLE_SRV_LOGE(TAG, "Start fail: ota_begin %s", esp_err_to_name(ret));
-        bt_cleanup_locked();
+        bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
-        BT_UNLOCK();
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return false;
     }
 
     s_receiving = true;
     uint32_t fw_size = s_fw_total_size;
-    BT_UNLOCK();
 
     ble_srv_ota_set_fw_size(gen, fw_size);
     ble_srv_ota_report_progress(gen, 0, 0);
@@ -289,18 +260,15 @@ static bool handle_start(const uint8_t *data, uint16_t len)
 
 static bool handle_verify(void)
 {
-    BT_LOCK();
     uint8_t gen = s_gen;
     bool valid = (gen != BLE_OTA_INVALID_GEN) && ble_srv_ota_gen_valid(gen) &&
                  (ble_srv_ota_get_mode() == BLE_OTA_MODE_BT) && s_receiving;
     if (!valid) {
-        BT_UNLOCK();
         ESP_LOGW(TAG, "VERIFY ignored: no BT OTA session");
         return false;
     }
 
     if (ble_srv_ota_get_state() != BLE_OTA_STATE_RECEIVING) {
-        BT_UNLOCK();
         ESP_LOGW(TAG, "VERIFY ignored, state=%d", ble_srv_ota_get_state());
         return false;
     }
@@ -311,9 +279,8 @@ static bool handle_verify(void)
         esp_err_t ret = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "OTA flush fail: %s", esp_err_to_name(ret));
-            bt_cleanup_locked();
+            bt_cleanup();
             s_gen = BLE_OTA_INVALID_GEN;
-            BT_UNLOCK();
             ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
             return false;
         }
@@ -327,8 +294,6 @@ static bool handle_verify(void)
     uint32_t expected_crc = s_fw_crc;
     uint32_t computed_crc = s_running_crc ^ 0xFFFFFFFF;
     esp_ota_handle_t handle = s_ota_handle;
-
-    BT_UNLOCK();
 
     ble_srv_ota_report_progress(gen, total_received, bytes_written);
 
@@ -357,9 +322,7 @@ static bool handle_verify(void)
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFYING, BLE_OTA_ERR_NONE);
 
     esp_err_t ret = esp_ota_end(handle);
-    BT_LOCK();
     s_ota_handle = 0;
-    BT_UNLOCK();
 
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(ret));
@@ -368,9 +331,7 @@ static bool handle_verify(void)
         return false;
     }
 
-    BT_LOCK();
     s_write_buf_len = 0;
-    BT_UNLOCK();
 
     ble_srv_ota_report_progress(gen, total_received, bytes_written);
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFY_OK, BLE_OTA_ERR_NONE);
@@ -381,12 +342,10 @@ static bool handle_verify(void)
 
 static bool handle_apply(void)
 {
-    BT_LOCK();
     uint8_t gen = s_gen;
     bool valid = (gen != BLE_OTA_INVALID_GEN) && ble_srv_ota_gen_valid(gen) &&
                  (ble_srv_ota_get_mode() == BLE_OTA_MODE_BT);
     const esp_partition_t *part = s_target_partition;
-    BT_UNLOCK();
 
     if (!valid) {
         ESP_LOGW(TAG, "APPLY ignored: no BT OTA session");
@@ -461,33 +420,27 @@ bool ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len)
 
 bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
 {
-    BT_LOCK();
     uint8_t gen = s_gen;
     if (gen == BLE_OTA_INVALID_GEN || !ble_srv_ota_gen_valid(gen)) {
-        BT_UNLOCK();
         return false;
     }
 
     if (!s_receiving) {
-        BT_UNLOCK();
         return false;
     }
 
     if (ble_srv_ota_get_state() != BLE_OTA_STATE_RECEIVING) {
-        BT_UNLOCK();
         return false;
     }
 
     if (ble_srv_ota_is_abort_requested()) {
-        BT_UNLOCK();
         return false;
     }
 
     if (!data || len < 4) {
         ESP_LOGE(TAG, "Invalid fw_data: data=%p len=%u", data, len);
-        bt_cleanup_locked();
+        bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
-        BT_UNLOCK();
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return false;
     }
@@ -507,7 +460,6 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
                      (unsigned long)offset, (unsigned long)s_total_received);
         uint32_t recv = s_total_received;
         uint32_t written = s_fw_bytes_written;
-        BT_UNLOCK();
         if (ble_srv_ota_gen_valid(gen)) {
             ble_srv_ota_report_progress(gen, recv, written);
             ble_srv_ota_push_status(gen);
@@ -516,21 +468,18 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     }
 
     if (offset < s_total_received) {
-        BT_UNLOCK();
         return true;
     }
 
     if (payload_len == 0) {
-        BT_UNLOCK();
         return true;
     }
 
     if (s_total_received + payload_len > s_fw_total_size) {
         ESP_LOGE(TAG, "FW overflow: %lu+%u > %lu",
                  (unsigned long)s_total_received, payload_len, (unsigned long)s_fw_total_size);
-        bt_cleanup_locked();
+        bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
-        BT_UNLOCK();
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INVALID_SIZE);
         return false;
     }
@@ -543,9 +492,8 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
             if (write_err != ESP_OK) {
                 ESP_LOGE(TAG, "OTA write fail: %s", esp_err_to_name(write_err));
                 BLE_SRV_LOGE(TAG, "Flash write fail: %s", esp_err_to_name(write_err));
-                bt_cleanup_locked();
+                bt_cleanup();
                 s_gen = BLE_OTA_INVALID_GEN;
-                BT_UNLOCK();
                 ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
                 return false;
             }
@@ -566,9 +514,8 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
         if (write_err != ESP_OK) {
             ESP_LOGE(TAG, "OTA write fail: %s", esp_err_to_name(write_err));
             BLE_SRV_LOGE(TAG, "Flash write fail: %s", esp_err_to_name(write_err));
-            bt_cleanup_locked();
+            bt_cleanup();
             s_gen = BLE_OTA_INVALID_GEN;
-            BT_UNLOCK();
             ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
             return false;
         }
@@ -590,13 +537,10 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     if (do_ack) {
         uint32_t total_received = s_total_received;
         uint32_t bytes_written = s_fw_bytes_written;
-        BT_UNLOCK();
         if (ble_srv_ota_gen_valid(gen)) {
             ble_srv_ota_report_progress(gen, total_received, bytes_written);
             ble_srv_ota_push_status(gen);
         }
-    } else {
-        BT_UNLOCK();
     }
 
     return true;
