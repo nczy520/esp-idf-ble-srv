@@ -277,6 +277,12 @@ class BLEDeviceClient:
             else:
                 print("PIN认证失败: 设备返回未认证状态")
                 return False
+        except BleakError as e:
+            if "not found" in str(e).lower() or "was not found" in str(e).lower():
+                print("设备不支持PIN认证，跳过认证")
+                return True
+            print(f"PIN认证失败: {e}")
+            return False
         except Exception as e:
             print(f"PIN认证失败: {e}")
             return False

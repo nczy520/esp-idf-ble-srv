@@ -34,6 +34,10 @@ static const char *TAG = "BLE_SRV_LOG";
 #define BLE_SRV_LOG_LINE_SIZE CONFIG_BLE_SRV_LOG_LINE_SIZE
 #define BLE_SRV_LOG_FLUSH_INTERVAL_MS CONFIG_BLE_SRV_LOG_FLUSH_INTERVAL_MS
 
+#ifndef CONFIG_BLE_SRV_NTP_TIMEZONE
+#define CONFIG_BLE_SRV_NTP_TIMEZONE "CST-8"
+#endif
+
 static ble_srv_log_level_t s_log_level = BLE_SRV_LOG_LEVEL_INFO;
 static ble_srv_log_storage_t s_storage = BLE_SRV_LOG_STORAGE_NONE;
 static SemaphoreHandle_t s_log_lock = NULL;
@@ -42,7 +46,9 @@ static char s_log_file_path[128] = {0};
 static uint32_t s_current_file_size = 0;
 static bool s_initialized = false;
 static int64_t s_boot_time_us = 0;
+#ifdef CONFIG_BLE_SRV_LOG_SD_ENABLED
 static sdmmc_card_t *s_sd_card = NULL;
+#endif
 
 static QueueHandle_t s_log_queue = NULL;
 static uint8_t *s_log_queue_storage = NULL;

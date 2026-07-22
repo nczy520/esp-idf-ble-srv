@@ -510,6 +510,12 @@ class BleCore:
             else:
                 self._log("PIN认证失败: 设备返回未认证状态", "error")
                 return False
+        except BleakError as e:
+            if "not found" in str(e).lower() or "was not found" in str(e).lower():
+                self._log("设备不支持PIN认证，跳过认证", "warn")
+                return True
+            self._log(f"PIN认证失败: {e}", "error")
+            return False
         except Exception as e:
             self._log(f"PIN认证失败: {e}", "error")
             return False
@@ -661,9 +667,15 @@ class BleCore:
         if not self.connected:
             raise BleakError("未连接")
         self._log(f"读取 GATT [{uuid}]", "tx")
-        data = await self.ble_client.read_gatt_char(uuid)
-        self._log(f"读取成功 [{uuid}]: {len(data)} bytes", "rx")
-        return data
+        try:
+            data = await self.ble_client.read_gatt_char(uuid)
+            self._log(f"读取成功 [{uuid}]: {len(data)} bytes", "rx")
+            return data
+        except (BleakError, OSError) as e:
+            if "not found" in str(e).lower():
+                self._log(f"特征不存在 [{uuid}]", "warn")
+                return None
+            raise
 
     async def _write_gatt(self, uuid, data, response=True, ignore_disconnect=False):
         if not self.connected:
@@ -675,7 +687,10 @@ class BleCore:
             return True
         except (BleakError, OSError) as e:
             msg = str(e).lower()
-            if ignore_disconnect and any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset", "not found", "abort"]):
+            if "not found" in msg:
+                self._log(f"特征不存在 [{uuid}]", "warn")
+                return False
+            if ignore_disconnect and any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset", "abort"]):
                 self._log("写入完成（设备已断开）", "warn")
                 self._is_connected = False
                 if self._disconnect_callback:
@@ -770,12 +785,14 @@ class BleCore:
             self._restart_in_progress = False
 
     async def led_on(self):
-        await self._write_gatt(BLE_LED_CTRL_CHAR_UUID, bytes([BLE_LED_CTRL_ON]))
+        if not await self._write_gatt(BLE_LED_CTRL_CHAR_UUID, bytes([BLE_LED_CTRL_ON])):
+            return False
         self._log("LED 已打开", "success")
         return True
 
     async def led_off(self):
-        await self._write_gatt(BLE_LED_CTRL_CHAR_UUID, bytes([BLE_LED_CTRL_OFF]))
+        if not await self._write_gatt(BLE_LED_CTRL_CHAR_UUID, bytes([BLE_LED_CTRL_OFF])):
+            return False
         self._log("LED 已关闭", "success")
         return True
 
@@ -784,7 +801,8 @@ class BleCore:
         return data[0] if data else 0
 
     async def led_set_color(self, r, g, b):
-        await self._write_gatt(BLE_LED_COLOR_CHAR_UUID, bytes([r, g, b]))
+        if not await self._write_gatt(BLE_LED_COLOR_CHAR_UUID, bytes([r, g, b])):
+            return False
         self._log(f"LED 颜色已设置: R={r}, G={g}, B={b}", "success")
         return True
 
@@ -792,7 +810,8 @@ class BleCore:
         if isinstance(effect, str):
             effect = EFFECT_MAP.get(effect, 0)
         data = bytes([effect, speed])
-        await self._write_gatt(BLE_LED_EFFECT_CHAR_UUID, data)
+        if not await self._write_gatt(BLE_LED_EFFECT_CHAR_UUID, data):
+            return False
         self._log(f"LED 特效已设置: effect={effect}, speed={speed}", "success")
         return True
 

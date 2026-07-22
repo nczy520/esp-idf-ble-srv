@@ -6,6 +6,13 @@ static const char *TAG = "BLE_SRV_TEMP";
 #if SOC_TEMP_SENSOR_SUPPORTED
 #include "driver/temperature_sensor.h"
 
+#ifndef CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MIN
+#define CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MIN -10
+#endif
+#ifndef CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MAX
+#define CONFIG_BLE_SRV_TEMP_SENSOR_RANGE_MAX 80
+#endif
+
 static temperature_sensor_handle_t s_temp_sensor = NULL;
 static bool s_temp_sensor_initialized = false;
 
