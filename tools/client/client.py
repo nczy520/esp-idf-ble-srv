@@ -612,14 +612,20 @@ class BLEDeviceClient:
             pass
         return True
 
+    @staticmethod
+    def _read_fw_file(fw_path):
+        with open(fw_path, 'rb') as f:
+            return f.read()
+
     async def ota_update(self, fw_path):
         if not os.path.exists(fw_path):
             print(f"固件文件不存在: {fw_path}")
             return False
-        with open(fw_path, 'rb') as f:
-            fw_data = f.read()
+        # 读取整个固件并计算 CRC 是阻塞操作，放到线程池执行，避免卡住事件循环
+        loop = asyncio.get_event_loop()
+        fw_data = await loop.run_in_executor(None, self._read_fw_file, fw_path)
         fw_size = len(fw_data)
-        fw_crc = zlib.crc32(fw_data) & 0xFFFFFFFF
+        fw_crc = await loop.run_in_executor(None, lambda: zlib.crc32(fw_data) & 0xFFFFFFFF)
         fw_version, fw_ver_str = parse_esp_fw_version(fw_data)
         mtu = self.client.mtu_size if self.client and hasattr(self.client, 'mtu_size') else 247
         attr_overhead = 3

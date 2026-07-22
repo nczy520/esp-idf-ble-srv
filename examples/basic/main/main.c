@@ -5,12 +5,13 @@
 #include "esp_err.h"
 #include "nvs_flash.h"
 #include "ble_srv.h"
+#include "ble_srv_log.h"
 
 static const char *TAG = "APP_MAIN";
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Initializing BLE Service Example");
+    BLE_SRV_LOGI(TAG, "Initializing BLE Service Example");
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -20,7 +21,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     if (!ble_srv_log_init()) {
-        ESP_LOGE(TAG, "Log system initialization failed");
+        BLE_SRV_LOGE(TAG, "Log system initialization failed");
         return;
     }
     BLE_SRV_LOGI(TAG, "Log system initialized");

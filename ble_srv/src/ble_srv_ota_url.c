@@ -15,9 +15,9 @@
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 
-#define OTA_LOGI(...) do { ESP_LOGI(TAG, __VA_ARGS__); ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_INFO,  TAG, __VA_ARGS__); } while(0)
-#define OTA_LOGW(...) do { ESP_LOGW(TAG, __VA_ARGS__); ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_WARN,  TAG, __VA_ARGS__); } while(0)
-#define OTA_LOGE(...) do { ESP_LOGE(TAG, __VA_ARGS__); ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_ERROR, TAG, __VA_ARGS__); } while(0)
+#define OTA_LOGI(...) ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_INFO,  TAG, __VA_ARGS__)
+#define OTA_LOGW(...) ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_WARN,  TAG, __VA_ARGS__)
+#define OTA_LOGE(...) ble_srv_gatt_log_send(BLE_SRV_LOG_LEVEL_ERROR, TAG, __VA_ARGS__)
 
 static const char *TAG = "OTA_URL";
 
@@ -680,6 +680,7 @@ void ble_srv_ota_url_deinit(void)
         return;
     }
     BLE_SRV_LOGI(TAG, "OTA deinit");
+    bool task_exited = true;
     if (s_url_task) {
         TaskHandle_t task = s_url_task;
         ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
@@ -691,11 +692,13 @@ void ble_srv_ota_url_deinit(void)
             wait++;
         }
         if (s_url_task != NULL) {
-            OTA_LOGW("URL OTA task did not exit in time");
-            s_url_task = NULL;
+            // 任务未在超时内退出：它仍可能引用 s_ota_url。此时绝不能释放该缓冲区，
+            // 否则运行中的任务会 use-after-free。宁可保留（泄漏）也不触发 UAF。
+            OTA_LOGW("URL OTA task did not exit in time, keeping URL buffer to avoid UAF");
+            task_exited = false;
         }
     }
-    if (s_ota_url) {
+    if (task_exited && s_ota_url) {
         heap_caps_free(s_ota_url);
         s_ota_url = NULL;
     }
@@ -740,19 +743,21 @@ bool ble_srv_ota_url_start(const char *url)
         return false;
     }
 
+    // 必须在创建任务前填充 s_ota_url：否则新任务若抢先运行，会读到空/旧 URL（TOCTOU）。
+    strncpy(s_ota_url, url, BLE_OTA_URL_MAX_URL_LEN);
+    s_ota_url[BLE_OTA_URL_MAX_URL_LEN] = '\0';
+
     TaskHandle_t task_handle = NULL;
     BaseType_t ok = xTaskCreate(url_task, "ota_url", OTA_URL_TASK_STACK,
                                  (void *)(uintptr_t)gen,
                                  OTA_URL_TASK_PRIO, &task_handle);
     if (ok != pdPASS) {
         OTA_LOGE("Failed to create URL OTA task");
+        s_ota_url[0] = '\0';
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
         return false;
     }
     s_url_task = task_handle;
-
-    strncpy(s_ota_url, url, BLE_OTA_URL_MAX_URL_LEN);
-    s_ota_url[BLE_OTA_URL_MAX_URL_LEN] = '\0';
 
     OTA_LOGI("URL OTA started: %s, gen=%u", url, gen);
     BLE_SRV_LOGI(TAG, "OTA start initiated: %s", url);

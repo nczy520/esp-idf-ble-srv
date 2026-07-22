@@ -113,7 +113,6 @@ void ble_srv_ota_bt_handle_abort(void)
     if (!is_bt_mode || !gen_valid) {
         return;
     }
-    ESP_LOGW(TAG, "Handling BT OTA abort, gen=%u", gen);
     BLE_SRV_LOGW(TAG, "OTA abort, gen=%u", gen);
     bt_flush_and_finish(gen, BLE_OTA_STATE_ABORTED, BLE_OTA_ERR_ABORTED);
 }
@@ -121,17 +120,17 @@ void ble_srv_ota_bt_handle_abort(void)
 bool ble_srv_ota_bt_init(void)
 {
     if (s_initialized) {
-        ESP_LOGW(TAG, "BT OTA already initialized");
+        BLE_SRV_LOGW(TAG, "BT OTA already initialized");
         return true;
     }
 
     s_write_buf = heap_caps_malloc(BLE_SRV_WRITE_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_write_buf) {
-        ESP_LOGW(TAG, "PSRAM alloc failed for %d bytes, trying internal RAM", BLE_SRV_WRITE_BUF_SIZE);
+        BLE_SRV_LOGW(TAG, "PSRAM alloc failed for %d bytes, trying internal RAM", BLE_SRV_WRITE_BUF_SIZE);
         s_write_buf = heap_caps_malloc(BLE_SRV_WRITE_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (!s_write_buf) {
-        ESP_LOGE(TAG, "Failed to allocate OTA write buffer (%d bytes)", BLE_SRV_WRITE_BUF_SIZE);
+        BLE_SRV_LOGE(TAG, "Failed to allocate OTA write buffer (%d bytes)", BLE_SRV_WRITE_BUF_SIZE);
         return false;
     }
 
@@ -148,7 +147,7 @@ bool ble_srv_ota_bt_init(void)
     s_packet_count = 0;
 
     s_initialized = true;
-    ESP_LOGI(TAG, "BT OTA initialized, write buffer=%d bytes", BLE_SRV_WRITE_BUF_SIZE);
+    BLE_SRV_LOGI(TAG, "BT OTA initialized, write buffer=%d bytes", BLE_SRV_WRITE_BUF_SIZE);
     return true;
 }
 
@@ -176,13 +175,13 @@ void ble_srv_ota_bt_deinit(void)
 static bool handle_start(const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(ble_ota_bt_start_req_t)) {
-        ESP_LOGE(TAG, "START payload too short: %u < %u", len, (unsigned)sizeof(ble_ota_bt_start_req_t));
+        BLE_SRV_LOGE(TAG, "START payload too short: %u < %u", len, (unsigned)sizeof(ble_ota_bt_start_req_t));
         return false;
     }
 
     uint8_t gen = ble_srv_ota_begin(BLE_OTA_MODE_BT);
     if (gen == BLE_OTA_INVALID_GEN) {
-        ESP_LOGE(TAG, "Cannot begin BT OTA, session busy");
+        BLE_SRV_LOGE(TAG, "Cannot begin BT OTA, session busy");
         return false;
     }
 
@@ -193,17 +192,10 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     s_fw_crc = req->fw_crc;
     s_running_crc = 0xFFFFFFFF;
 
-    ESP_LOGI(TAG, "BT OTA START: size=%lu, crc=0x%08lX, chunk=%u, ver=v%lu.%lu.%lu, gen=%u",
-             (unsigned long)s_fw_total_size, (unsigned long)s_fw_crc, req->chunk_size,
-             (unsigned long)(req->fw_version >> 16) & 0xFF,
-             (unsigned long)(req->fw_version >> 8) & 0xFF,
-             (unsigned long)req->fw_version & 0xFF,
-             gen);
     BLE_SRV_LOGI(TAG, "OTA start: size=%lu, crc=0x%08lX, gen=%u",
                  (unsigned long)s_fw_total_size, (unsigned long)s_fw_crc, gen);
 
     if (s_fw_total_size == 0 || s_fw_total_size > BLE_OTA_MAX_FW_SIZE) {
-        ESP_LOGE(TAG, "Invalid fw size: %lu", (unsigned long)s_fw_total_size);
         BLE_SRV_LOGE(TAG, "Start fail: invalid size %lu", (unsigned long)s_fw_total_size);
         bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
@@ -213,7 +205,6 @@ static bool handle_start(const uint8_t *data, uint16_t len)
 
     s_target_partition = esp_ota_get_next_update_partition(NULL);
     if (!s_target_partition) {
-        ESP_LOGE(TAG, "No update partition");
         BLE_SRV_LOGE(TAG, "Start fail: no update partition");
         bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
@@ -221,7 +212,7 @@ static bool handle_start(const uint8_t *data, uint16_t len)
         return false;
     }
 
-    ESP_LOGI(TAG, "Target: %s @0x%lx (%lu bytes)",
+    BLE_SRV_LOGI(TAG, "Target: %s @0x%lx (%lu bytes)",
              s_target_partition->label,
              (unsigned long)s_target_partition->address,
              (unsigned long)s_target_partition->size);
@@ -239,7 +230,6 @@ static bool handle_start(const uint8_t *data, uint16_t len)
 
     esp_err_t ret = esp_ota_begin(s_target_partition, s_fw_total_size, &s_ota_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(ret));
         BLE_SRV_LOGE(TAG, "Start fail: ota_begin %s", esp_err_to_name(ret));
         bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
@@ -254,7 +244,7 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     ble_srv_ota_report_progress(gen, 0, 0);
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_RECEIVING, BLE_OTA_ERR_NONE);
 
-    ESP_LOGI(TAG, "BT OTA session started");
+    BLE_SRV_LOGI(TAG, "BT OTA session started");
     return true;
 }
 
@@ -264,12 +254,12 @@ static bool handle_verify(void)
     bool valid = (gen != BLE_OTA_INVALID_GEN) && ble_srv_ota_gen_valid(gen) &&
                  (ble_srv_ota_get_mode() == BLE_OTA_MODE_BT) && s_receiving;
     if (!valid) {
-        ESP_LOGW(TAG, "VERIFY ignored: no BT OTA session");
+        BLE_SRV_LOGW(TAG, "VERIFY ignored: no BT OTA session");
         return false;
     }
 
     if (ble_srv_ota_get_state() != BLE_OTA_STATE_RECEIVING) {
-        ESP_LOGW(TAG, "VERIFY ignored, state=%d", ble_srv_ota_get_state());
+        BLE_SRV_LOGW(TAG, "VERIFY ignored, state=%d", ble_srv_ota_get_state());
         return false;
     }
 
@@ -278,7 +268,7 @@ static bool handle_verify(void)
     if (s_write_buf_len > 0) {
         esp_err_t ret = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "OTA flush fail: %s", esp_err_to_name(ret));
+            BLE_SRV_LOGE(TAG, "OTA flush fail: %s", esp_err_to_name(ret));
             bt_cleanup();
             s_gen = BLE_OTA_INVALID_GEN;
             ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_FLASH_WRITE);
@@ -297,22 +287,19 @@ static bool handle_verify(void)
 
     ble_srv_ota_report_progress(gen, total_received, bytes_written);
 
-    ESP_LOGI(TAG, "Flushed: written=%lu, received=%lu",
+    BLE_SRV_LOGI(TAG, "Flushed: written=%lu, received=%lu",
              (unsigned long)bytes_written, (unsigned long)total_received);
 
     if (bytes_written != fw_total) {
-        ESP_LOGE(TAG, "Size mismatch: written %lu != expected %lu",
-                 (unsigned long)bytes_written, (unsigned long)fw_total);
         BLE_SRV_LOGE(TAG, "Verify fail: size mismatch %lu != %lu",
                      (unsigned long)bytes_written, (unsigned long)fw_total);
         bt_flush_and_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INVALID_SIZE);
         return false;
     }
 
-    ESP_LOGI(TAG, "CRC check: expected=0x%08lX, computed=0x%08lX",
+    BLE_SRV_LOGI(TAG, "CRC check: expected=0x%08lX, computed=0x%08lX",
              (unsigned long)expected_crc, (unsigned long)computed_crc);
     if (computed_crc != expected_crc) {
-        ESP_LOGE(TAG, "CRC mismatch! Firmware data corrupted");
         BLE_SRV_LOGE(TAG, "Verify fail: CRC mismatch exp=0x%08lX got=0x%08lX",
                      (unsigned long)expected_crc, (unsigned long)computed_crc);
         bt_flush_and_finish(gen, BLE_OTA_STATE_VERIFY_FAIL, BLE_OTA_ERR_CRC_MISMATCH);
@@ -325,7 +312,6 @@ static bool handle_verify(void)
     s_ota_handle = 0;
 
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(ret));
         BLE_SRV_LOGE(TAG, "Verify fail: ota_end %s", esp_err_to_name(ret));
         bt_flush_and_finish(gen, BLE_OTA_STATE_VERIFY_FAIL, BLE_OTA_ERR_VERIFY_FAILED);
         return false;
@@ -335,7 +321,6 @@ static bool handle_verify(void)
 
     ble_srv_ota_report_progress(gen, total_received, bytes_written);
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_VERIFY_OK, BLE_OTA_ERR_NONE);
-    ESP_LOGI(TAG, "OTA verify OK");
     BLE_SRV_LOGI(TAG, "Verify OK");
     return true;
 }
@@ -348,12 +333,12 @@ static bool handle_apply(void)
     const esp_partition_t *part = s_target_partition;
 
     if (!valid) {
-        ESP_LOGW(TAG, "APPLY ignored: no BT OTA session");
+        BLE_SRV_LOGW(TAG, "APPLY ignored: no BT OTA session");
         return false;
     }
 
     if (ble_srv_ota_get_state() != BLE_OTA_STATE_VERIFY_OK) {
-        ESP_LOGW(TAG, "APPLY ignored, state=%d", ble_srv_ota_get_state());
+        BLE_SRV_LOGW(TAG, "APPLY ignored, state=%d", ble_srv_ota_get_state());
         return false;
     }
 
@@ -362,23 +347,19 @@ static bool handle_apply(void)
         return false;
     }
 
-    ESP_LOGI(TAG, "APPLY: boot -> %s @0x%lx",
+    BLE_SRV_LOGI(TAG, "APPLY: boot -> %s @0x%lx",
              part->label, (unsigned long)part->address);
 
     ble_srv_ota_set_state(gen, BLE_OTA_STATE_APPLYING, BLE_OTA_ERR_NONE);
 
     esp_err_t ret = esp_ota_set_boot_partition(part);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Set boot failed: %s", esp_err_to_name(ret));
         BLE_SRV_LOGE(TAG, "Apply fail: set boot %s", esp_err_to_name(ret));
         bt_flush_and_finish(gen, BLE_OTA_STATE_APPLY_FAIL, BLE_OTA_ERR_INTERNAL);
         return false;
     }
 
     const esp_partition_t *boot = esp_ota_get_boot_partition();
-    ESP_LOGI(TAG, "Boot set: %s @0x%lx",
-             boot ? boot->label : "?",
-             boot ? (unsigned long)boot->address : 0);
 
     BLE_SRV_LOGI(TAG, "Apply OK: %s", boot ? boot->label : "?");
     bt_flush_and_finish(gen, BLE_OTA_STATE_APPLY_OK, BLE_OTA_ERR_NONE);
@@ -388,7 +369,7 @@ static bool handle_apply(void)
 bool ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len)
 {
     if (!data || len == 0) {
-        ESP_LOGW(TAG, "Empty command ignored");
+        BLE_SRV_LOGW(TAG, "Empty command ignored");
         return false;
     }
 
@@ -396,7 +377,7 @@ bool ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len)
     uint16_t payload_len = len - 1;
     const uint8_t *payload = data + 1;
 
-    ESP_LOGI(TAG, "BT OTA cmd=0x%02X payload=%u state=%d",
+    BLE_SRV_LOGI(TAG, "BT OTA cmd=0x%02X payload=%u state=%d",
              cmd, payload_len, ble_srv_ota_get_state());
 
     switch (cmd) {
@@ -413,7 +394,7 @@ bool ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len)
     case BLE_OTA_BT_CMD_APPLY:
         return handle_apply();
     default:
-        ESP_LOGW(TAG, "Unknown cmd: 0x%02X", cmd);
+        BLE_SRV_LOGW(TAG, "Unknown cmd: 0x%02X", cmd);
         return false;
     }
 }
@@ -438,7 +419,7 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     }
 
     if (!data || len < 4) {
-        ESP_LOGE(TAG, "Invalid fw_data: data=%p len=%u", data, len);
+        BLE_SRV_LOGE(TAG, "Invalid fw_data: data=%p len=%u", data, len);
         bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
         ble_srv_ota_finish(gen, BLE_OTA_STATE_ERROR, BLE_OTA_ERR_INTERNAL);
@@ -454,8 +435,6 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     uint16_t payload_len = len - 4;
 
     if (offset > s_total_received) {
-        ESP_LOGW(TAG, "Out-of-order: got=%lu expected=%lu, sending NAK",
-                 (unsigned long)offset, (unsigned long)s_total_received);
         BLE_SRV_LOGW(TAG, "Out-of-order data: got=%lu exp=%lu",
                      (unsigned long)offset, (unsigned long)s_total_received);
         uint32_t recv = s_total_received;
@@ -476,7 +455,7 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     }
 
     if (s_total_received + payload_len > s_fw_total_size) {
-        ESP_LOGE(TAG, "FW overflow: %lu+%u > %lu",
+        BLE_SRV_LOGE(TAG, "FW overflow: %lu+%u > %lu",
                  (unsigned long)s_total_received, payload_len, (unsigned long)s_fw_total_size);
         bt_cleanup();
         s_gen = BLE_OTA_INVALID_GEN;
@@ -490,7 +469,6 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
         if (s_write_buf_len > 0) {
             write_err = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
             if (write_err != ESP_OK) {
-                ESP_LOGE(TAG, "OTA write fail: %s", esp_err_to_name(write_err));
                 BLE_SRV_LOGE(TAG, "Flash write fail: %s", esp_err_to_name(write_err));
                 bt_cleanup();
                 s_gen = BLE_OTA_INVALID_GEN;
@@ -512,7 +490,6 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     if (s_write_buf_len >= BLE_SRV_WRITE_BUF_SIZE) {
         write_err = esp_ota_write(s_ota_handle, s_write_buf, s_write_buf_len);
         if (write_err != ESP_OK) {
-            ESP_LOGE(TAG, "OTA write fail: %s", esp_err_to_name(write_err));
             BLE_SRV_LOGE(TAG, "Flash write fail: %s", esp_err_to_name(write_err));
             bt_cleanup();
             s_gen = BLE_OTA_INVALID_GEN;

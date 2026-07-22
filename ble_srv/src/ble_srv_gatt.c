@@ -295,7 +295,6 @@ static void ble_srv_auth_fail_disconnect(uint16_t conn_handle)
     if (om) {
         ble_gatts_notify_custom(conn_handle, s_srv_auth_chr_val_handle, om);
     }
-    ESP_LOGW(TAG, "Unauthenticated access, disconnecting (conn=%d)", conn_handle);
     BLE_SRV_LOGW(TAG, "Unauthenticated access, disconnecting (conn=%d)", conn_handle);
     ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
 }
@@ -303,6 +302,7 @@ static void ble_srv_auth_fail_disconnect(uint16_t conn_handle)
 
 static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt)
 {
+    (void)conn_handle;
     int rc;
 
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
@@ -312,8 +312,11 @@ static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct bl
         return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
     if (!s_conn_authenticated) {
-        ESP_LOGW(TAG, "Read denied: not authenticated (handle=%d)", attr_handle);
-        ble_srv_auth_fail_disconnect(conn_handle);
+        // 仅拒绝本次读，不立即断连：写请求经消息队列异步串行处理，而读在 Host 线程
+        // 同步判定。客户端"写 PIN 后立即读"时，PIN 写可能仍在队列中未被处理，此处
+        // 会读到未认证状态；若立即断连会造成误断。返回错误码即可，客户端应在收到
+        // 认证成功通知后再读。显式的错误 PIN 断连仍由写路径负责。
+        BLE_SRV_LOGW(TAG, "Read denied: not authenticated (handle=%d)", attr_handle);
         return BLE_SRV_AUTH_ERR_NOT_AUTH;
     }
 #endif
@@ -457,16 +460,14 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
                       memcmp(data, s_auth_pin, data_len) == 0);
         s_conn_authenticated = match;
         if (match) {
-            ESP_LOGI(TAG, "PIN authentication success (conn=%d)", conn_handle);
             BLE_SRV_LOGI(TAG, "PIN authentication success (conn=%d)", conn_handle);
         } else {
-            ESP_LOGW(TAG, "PIN authentication failed (conn=%d)", conn_handle);
             BLE_SRV_LOGW(TAG, "PIN authentication failed (conn=%d)", conn_handle);
         }
         return;
     }
     if (!s_conn_authenticated) {
-        ESP_LOGW(TAG, "Write denied: not authenticated (handle=%d)", attr_handle);
+        BLE_SRV_LOGW(TAG, "Write denied: not authenticated (handle=%d)", attr_handle);
         ble_srv_auth_fail_disconnect(conn_handle);
         return;
     }
@@ -494,7 +495,7 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
         case BLE_OTA_URL_CMD_START_DEFAULT: {
             const char *default_url = CONFIG_BLE_SRV_OTA_URL_DEFAULT;
             if (strlen(default_url) == 0) {
-                ESP_LOGE(TAG, "Default OTA URL is empty");
+                BLE_SRV_LOGE(TAG, "Default OTA URL is empty");
                 return;
             }
             ble_srv_ota_url_start(default_url);
@@ -510,7 +511,6 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
 #endif
     else if (attr_handle == s_srv_cmd_chr_val_handle) {
         ble_srv_cmd_t cmd = (ble_srv_cmd_t)data[0];
-        ESP_LOGI(TAG, "SRV command: 0x%02X", cmd);
         BLE_SRV_LOGI(TAG, "SRV command: 0x%02X", cmd);
         switch (cmd) {
         case BLE_SRV_CMD_RESTART:
@@ -559,7 +559,7 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
 #ifdef CONFIG_BLE_SRV_NTP_ENABLED
             ble_srv_ntp_sync();
 #else
-            ESP_LOGW(TAG, "NTP sync not enabled");
+            BLE_SRV_LOGW(TAG, "NTP sync not enabled");
 #endif
             break;
         default:
@@ -607,11 +607,9 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
         if (data_len > 0) {
             uint8_t cmd = data[0];
             if (cmd == BLE_SRV_LOG_HTTP_CMD_START) {
-                ESP_LOGI(TAG, "HTTP server start requested");
                 BLE_SRV_LOGI(TAG, "HTTP server start requested");
                 ble_srv_log_http_start();
             } else if (cmd == BLE_SRV_LOG_HTTP_CMD_STOP) {
-                ESP_LOGI(TAG, "HTTP server stop requested");
                 BLE_SRV_LOGI(TAG, "HTTP server stop requested");
                 ble_srv_log_http_stop();
             } else if (cmd == BLE_SRV_LOG_HTTP_CMD_WRITE_LOG && data_len > 1) {
@@ -622,13 +620,12 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
                 msg[msg_len] = '\0';
                 BLE_SRV_LOGI("CLIENT", "%s", msg);
             } else if (cmd == BLE_SRV_LOG_HTTP_CMD_FORMAT_LITTLEFS) {
-                ESP_LOGI(TAG, "Format LittleFS requested");
                 BLE_SRV_LOGI(TAG, "Format LittleFS requested");
                 ble_srv_log_format_littlefs();
             } else if (cmd == BLE_SRV_LOG_HTTP_CMD_SET_LEVEL && data_len > 1) {
                 uint8_t level = data[1];
                 if (level <= BLE_SRV_LOG_LEVEL_VERBOSE) {
-                    ESP_LOGI(TAG, "Set log level: %d", level);
+                    BLE_SRV_LOGI(TAG, "Set log level: %d", level);
                     ble_srv_log_set_level((ble_srv_log_level_t)level);
                 }
             }
@@ -650,14 +647,6 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         return handle_read_chr(conn_handle, attr_handle, ctxt);
 
     case BLE_GATT_ACCESS_OP_WRITE_CHR: {
-#ifdef CONFIG_BLE_SRV_AUTH_ENABLED
-        if (!s_conn_authenticated && attr_handle != s_srv_auth_chr_val_handle) {
-            ESP_LOGW(TAG, "Write denied: not authenticated (handle=%d)", attr_handle);
-            ble_srv_auth_fail_disconnect(conn_handle);
-            return BLE_SRV_AUTH_ERR_NOT_AUTH;
-        }
-#endif
-
         uint16_t om_len = OS_MBUF_PKTLEN(ctxt->om);
         if (om_len == 0 || om_len > BLE_SRV_GATT_WRITE_BUF_SIZE) {
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
@@ -669,7 +658,21 @@ int ble_srv_gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             return BLE_ATT_ERR_UNLIKELY;
         }
 
-        ble_srv_gatt_handle_write(conn_handle, attr_handle, s_write_buf, data_len);
+        // 将写请求投递到 ble_srv 任务串行处理：避免在 NimBLE Host 回调线程中
+        // 执行阻塞式 Flash 操作（OTA），并使所有 OTA/GATT 状态仅由单一任务线程访问，
+        // 消除与断连中止（同样运行于该任务）之间的数据竞争与 use-after-free。
+        // 认证校验统一在 ble_srv_gatt_handle_write 中串行执行，保证顺序一致。
+        // fw_data 为高频无响应写，且 OTA 侧有乱序 NAK 重传兜底，丢包可自恢复，
+        // 因此不阻塞 Host 线程（wait=0）。其它写（尤其 OTA START/VERIFY/APPLY 命令）
+        // 无重传机制，命令丢失会导致会话卡死，给一个较短的有界等待（30ms）让 task
+        // 消费回收池槽，尽量投递成功，同时避免长时间阻塞 NimBLE Host 线程。
+        TickType_t send_wait = (attr_handle == s_ota_bt_fw_data_chr_val_handle)
+                                   ? 0 : pdMS_TO_TICKS(30);
+        if (!ble_srv_msg_send(MSG_GATT_WRITE, s_write_buf, data_len,
+                              attr_handle, conn_handle, send_wait)) {
+            BLE_SRV_LOGW(TAG, "Write dropped: queue busy (handle=%d)", attr_handle);
+            return BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
         return 0;
     }
 
@@ -704,7 +707,7 @@ bool ble_srv_gatt_init(void)
     memcpy(s_auth_pin, pin, pin_len);
     s_auth_pin[pin_len] = '\0';
     s_conn_authenticated = false;
-    ESP_LOGI(TAG, "PIN auth enabled, PIN length=%zu", pin_len);
+    BLE_SRV_LOGI(TAG, "PIN auth enabled, PIN length=%zu", pin_len);
 #endif
     return true;
 }
@@ -765,7 +768,7 @@ void ble_srv_gatt_clear_auth_state(uint16_t conn_handle)
 {
     (void)conn_handle;
     s_conn_authenticated = false;
-    ESP_LOGI(TAG, "Auth state cleared (conn=%d)", conn_handle);
+    BLE_SRV_LOGI(TAG, "Auth state cleared (conn=%d)", conn_handle);
 }
 
 uint16_t ble_srv_gatt_get_auth_chr_val_handle(void)

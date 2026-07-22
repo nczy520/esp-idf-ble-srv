@@ -57,7 +57,7 @@ static void ble_srv_start_advertising(void)
     int rc;
 
     if (s_advertising) {
-        ESP_LOGW(TAG, "Already advertising");
+        BLE_SRV_LOGW(TAG, "Already advertising");
         return;
     }
 
@@ -68,7 +68,7 @@ static void ble_srv_start_advertising(void)
 
     rc = ble_gap_adv_set_fields(&adv_fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: rc=%d", rc);
+        BLE_SRV_LOGE(TAG, "ble_gap_adv_set_fields failed: rc=%d", rc);
         return;
     }
 
@@ -86,7 +86,7 @@ static void ble_srv_start_advertising(void)
 
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gap_adv_rsp_set_fields failed: rc=%d", rc);
+        BLE_SRV_LOGE(TAG, "ble_gap_adv_rsp_set_fields failed: rc=%d", rc);
         return;
     }
 
@@ -100,14 +100,11 @@ static void ble_srv_start_advertising(void)
                            &adv_params, ble_srv_gap_event_handler, NULL);
     if (rc == 0) {
         s_advertising = true;
-        ESP_LOGI(TAG, "BLE advertising started");
         BLE_SRV_LOGI(TAG, "BLE advertising started");
     } else if (rc == BLE_HS_EALREADY) {
         s_advertising = true;
-        ESP_LOGW(TAG, "BLE already advertising");
         BLE_SRV_LOGW(TAG, "BLE already advertising");
     } else {
-        ESP_LOGE(TAG, "ble_gap_adv_start failed: rc=%d", rc);
         BLE_SRV_LOGE(TAG, "ble_gap_adv_start failed: rc=%d", rc);
     }
 }
@@ -116,7 +113,6 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
 {
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
-        ESP_LOGI(TAG, "CONNECT: status=%d", event->connect.status);
         BLE_SRV_LOGI(TAG, "CONNECT: status=%d", event->connect.status);
         if (event->connect.conn_handle != BLE_HS_CONN_HANDLE_NONE) {
             ble_srv_msg_send(MSG_GAP_CONNECT, NULL, 0, 0,
@@ -127,7 +123,6 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
         BLE_SRV_LOGI(TAG, "DISCONNECT: reason=%d", event->disconnect.reason);
         ble_srv_msg_send(MSG_GAP_DISCONNECT, NULL, 0, 0,
                          event->disconnect.conn.conn_handle, 0);
@@ -138,8 +133,6 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_SUBSCRIBE: {
-        ESP_LOGI(TAG, "SUBSCRIBE: attr=%d, notify=%d",
-                 event->subscribe.attr_handle, event->subscribe.cur_notify);
         BLE_SRV_LOGI(TAG, "SUBSCRIBE: attr=%d, notify=%d",
                       event->subscribe.attr_handle, event->subscribe.cur_notify);
         uint8_t data[2] = {(uint8_t)(event->subscribe.cur_notify ? 1 : 0), 0};
@@ -149,7 +142,7 @@ static int ble_srv_gap_event_handler(struct ble_gap_event *event, void *arg)
     }
 
     case BLE_GAP_EVENT_MTU: {
-        ESP_LOGI(TAG, "MTU: conn=%d, mtu=%d",
+        BLE_SRV_LOGI(TAG, "MTU: conn=%d, mtu=%d",
                  event->mtu.conn_handle, event->mtu.value);
         uint16_t mtu = event->mtu.value;
         ble_srv_msg_send(MSG_GAP_MTU, (uint8_t *)&mtu, sizeof(mtu), 0,
@@ -214,12 +207,12 @@ void ble_srv_core_handle_subscribe(uint16_t attr_handle, uint16_t conn_handle,
         if (notify) {
             ble_srv_gatt_set_log_conn_handle(conn_handle);
         }
-        ESP_LOGI(TAG, "LOG notify %s (conn=%d)",
+        BLE_SRV_LOGI(TAG, "LOG notify %s (conn=%d)",
                  notify ? "enabled" : "disabled", conn_handle);
     }
     else if (attr_handle == ble_srv_gatt_get_custom_cmd_chr_val_handle()) {
         ble_srv_gatt_set_custom_cmd_notify_enabled(notify);
-        ESP_LOGI(TAG, "Custom cmd notify %s (conn=%d)",
+        BLE_SRV_LOGI(TAG, "Custom cmd notify %s (conn=%d)",
                  notify ? "enabled" : "disabled", conn_handle);
     }
 }
@@ -236,21 +229,19 @@ static void ble_srv_on_sync(void)
 
     rc = ble_hs_util_ensure_addr(0);
     if (rc != 0) {
-        ESP_LOGE(TAG, "ble_hs_util_ensure_addr failed: rc=%d", rc);
+        BLE_SRV_LOGE(TAG, "ble_hs_util_ensure_addr failed: rc=%d", rc);
         return;
     }
 
     rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
     if (rc != 0) {
-        ESP_LOGE(TAG, "ble_hs_id_infer_auto failed: rc=%d", rc);
+        BLE_SRV_LOGE(TAG, "ble_hs_id_infer_auto failed: rc=%d", rc);
         return;
     }
 
     uint8_t addr[6] = {0};
     rc = ble_hs_id_copy_addr(s_own_addr_type, addr, NULL);
     if (rc == 0) {
-        ESP_LOGI(TAG, "BLE address: %02X:%02X:%02X:%02X:%02X:%02X",
-                 addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
         BLE_SRV_LOGI(TAG, "BLE address: %02X:%02X:%02X:%02X:%02X:%02X",
                       addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
     }
@@ -260,7 +251,6 @@ static void ble_srv_on_sync(void)
 
 static void ble_srv_on_reset(int reason)
 {
-    ESP_LOGE(TAG, "NimBLE host reset: reason=%d", reason);
     BLE_SRV_LOGE(TAG, "NimBLE host reset: reason=%d", reason);
 }
 
@@ -272,37 +262,36 @@ static void ble_srv_host_task(void *param)
 
 bool ble_srv_init(void)
 {
-    ESP_LOGI(TAG, "Initializing BLE Service (NimBLE)");
     BLE_SRV_LOGI(TAG, "Initializing BLE Service (NimBLE)");
 
     uint8_t mac[6];
     esp_err_t ret = esp_read_mac(mac, ESP_MAC_BT);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_read_mac failed: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "esp_read_mac failed: %s", esp_err_to_name(ret));
         return false;
     }
 
     int name_len = snprintf(s_device_name, sizeof(s_device_name), "%s-%02X%02X%02X",
                              BLE_SRV_NAME_PREFIX, mac[3], mac[4], mac[5]);
     if (name_len < 0 || name_len >= (int)sizeof(s_device_name)) {
-        ESP_LOGE(TAG, "Device name overflow");
+        BLE_SRV_LOGE(TAG, "Device name overflow");
         return false;
     }
 
     if (!ble_srv_msg_init()) {
-        ESP_LOGE(TAG, "Failed to initialize message framework");
+        BLE_SRV_LOGE(TAG, "Failed to initialize message framework");
         return false;
     }
 
     if (!ble_srv_gatt_init()) {
-        ESP_LOGE(TAG, "Failed to initialize GATT");
+        BLE_SRV_LOGE(TAG, "Failed to initialize GATT");
         ble_srv_msg_deinit();
         return false;
     }
 
     ret = nimble_port_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(ret));
         ble_srv_gatt_deinit();
         ble_srv_msg_deinit();
         return false;
@@ -313,20 +302,20 @@ bool ble_srv_init(void)
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 
     ble_store_clear();
-    ESP_LOGI(TAG, "BLE bond store cleared");
+    BLE_SRV_LOGI(TAG, "BLE bond store cleared");
 
     ble_svc_gap_init();
     ble_svc_gatt_init();
 
     int rc = ble_svc_gap_device_name_set(s_device_name);
     if (rc != 0) {
-        ESP_LOGW(TAG, "ble_svc_gap_device_name_set failed: rc=%d", rc);
+        BLE_SRV_LOGW(TAG, "ble_svc_gap_device_name_set failed: rc=%d", rc);
     }
 
     const struct ble_gatt_svc_def *svcs = ble_srv_get_gatt_svcs();
     rc = ble_gatts_count_cfg(svcs);
     if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gatts_count_cfg failed: rc=%d", rc);
+        BLE_SRV_LOGE(TAG, "ble_gatts_count_cfg failed: rc=%d", rc);
         nimble_port_deinit();
         ble_srv_gatt_deinit();
         ble_srv_msg_deinit();
@@ -335,7 +324,7 @@ bool ble_srv_init(void)
 
     rc = ble_gatts_add_svcs(svcs);
     if (rc != 0) {
-        ESP_LOGE(TAG, "ble_gatts_add_svcs failed: rc=%d", rc);
+        BLE_SRV_LOGE(TAG, "ble_gatts_add_svcs failed: rc=%d", rc);
         nimble_port_deinit();
         ble_srv_gatt_deinit();
         ble_srv_msg_deinit();
@@ -347,7 +336,7 @@ bool ble_srv_init(void)
     nimble_port_freertos_init(ble_srv_host_task);
 
     if (!ble_srv_ota_init()) {
-        ESP_LOGE(TAG, "Failed to initialize OTA common");
+        BLE_SRV_LOGE(TAG, "Failed to initialize OTA common");
         ble_srv_task_stop();
         nimble_port_stop();
         nimble_port_deinit();
@@ -357,7 +346,7 @@ bool ble_srv_init(void)
     }
 
     if (!ble_srv_ota_bt_init()) {
-        ESP_LOGE(TAG, "Failed to initialize BT OTA");
+        BLE_SRV_LOGE(TAG, "Failed to initialize BT OTA");
         ble_srv_ota_deinit();
         ble_srv_task_stop();
         nimble_port_stop();
@@ -368,12 +357,12 @@ bool ble_srv_init(void)
     }
 
     if (!ble_srv_ota_url_init()) {
-        ESP_LOGW(TAG, "URL OTA init failed (non-critical)");
+        BLE_SRV_LOGW(TAG, "URL OTA init failed (non-critical)");
     }
 
 #ifdef CONFIG_BLE_SRV_LED_ENABLED
     if (!ble_srv_led_init()) {
-        ESP_LOGE(TAG, "Failed to initialize LED");
+        BLE_SRV_LOGE(TAG, "Failed to initialize LED");
         ble_srv_ota_url_deinit();
         ble_srv_ota_bt_deinit();
         ble_srv_ota_deinit();
@@ -387,17 +376,15 @@ bool ble_srv_init(void)
 #endif
 
     if (!ble_srv_temp_sensor_init()) {
-        ESP_LOGW(TAG, "Temperature sensor init failed (non-critical)");
+        BLE_SRV_LOGW(TAG, "Temperature sensor init failed (non-critical)");
     }
 
-    ESP_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);
     BLE_SRV_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);
     return true;
 }
 
 void ble_srv_deinit(void)
 {
-    ESP_LOGI(TAG, "Deinitializing BLE Service");
     BLE_SRV_LOGI(TAG, "Deinitializing BLE Service");
 
     ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
@@ -452,13 +439,12 @@ void ble_srv_schedule_restart_internal(uint32_t delay_ms)
         if (s_restart_timer) {
             xTimerStart(s_restart_timer, 0);
         } else {
-            ESP_LOGE(TAG, "Failed to create restart timer");
             BLE_SRV_LOGE(TAG, "Failed to create restart timer");
         }
         return;
     }
     if (xTimerChangePeriod(s_restart_timer, pdMS_TO_TICKS(delay_ms), 0) != pdPASS) {
-        ESP_LOGW(TAG, "xTimerChangePeriod failed for restart timer");
+        BLE_SRV_LOGW(TAG, "xTimerChangePeriod failed for restart timer");
     }
     xTimerReset(s_restart_timer, 0);
     xTimerStart(s_restart_timer, 0);

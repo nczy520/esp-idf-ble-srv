@@ -28,7 +28,6 @@ static volatile bool s_ntp_stop = false;
 
 static void sntp_time_sync_notification_cb(struct timeval *tv)
 {
-    ESP_LOGI(TAG, "NTP time sync completed");
     BLE_SRV_LOGI(TAG, "NTP time sync completed");
 
     time_t now = time(NULL);
@@ -37,17 +36,16 @@ static void sntp_time_sync_notification_cb(struct timeval *tv)
 
     char strftime_buf[64];
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    ESP_LOGI(TAG, "Current local time: %s", strftime_buf);
+    BLE_SRV_LOGI(TAG, "Current local time: %s", strftime_buf);
 }
 
 static void ntp_sync_task(void *arg)
 {
     TaskHandle_t caller = (TaskHandle_t)arg;
-    ESP_LOGI(TAG, "Starting NTP time synchronization...");
     BLE_SRV_LOGI(TAG, "NTP sync task started");
 
     if (esp_sntp_enabled()) {
-        ESP_LOGI(TAG, "SNTP already running, stopping first");
+        BLE_SRV_LOGI(TAG, "SNTP already running, stopping first");
         esp_sntp_stop();
     }
 
@@ -59,16 +57,16 @@ static void ntp_sync_task(void *arg)
 
     esp_sntp_set_time_sync_notification_cb(sntp_time_sync_notification_cb);
 
-    ESP_LOGI(TAG, "NTP servers configured:");
+    BLE_SRV_LOGI(TAG, "NTP servers configured:");
     for (int i = 0; i < sizeof(ntp_servers) / sizeof(ntp_servers[0]); i++) {
-        ESP_LOGI(TAG, "  Server %d: %s", i + 1, ntp_servers[i]);
+        BLE_SRV_LOGI(TAG, "  Server %d: %s", i + 1, ntp_servers[i]);
     }
 
     esp_sntp_init();
 
     setenv("TZ", CONFIG_BLE_SRV_NTP_TIMEZONE, 1);
     tzset();
-    ESP_LOGI(TAG, "Timezone set to: %s", CONFIG_BLE_SRV_NTP_TIMEZONE);
+    BLE_SRV_LOGI(TAG, "Timezone set to: %s", CONFIG_BLE_SRV_NTP_TIMEZONE);
 
     int retry = 0;
     const int max_retry = NTP_MAX_RETRIES;
@@ -76,24 +74,20 @@ static void ntp_sync_task(void *arg)
     while (retry < max_retry && !s_ntp_stop) {
         time_t now = time(NULL);
         if (now > 1000000000) {
-            ESP_LOGI(TAG, "NTP sync successful!");
             BLE_SRV_LOGI(TAG, "NTP sync successful");
             success = true;
             break;
         }
-        ESP_LOGI(TAG, "Waiting for NTP sync... (%d/%d)", retry + 1, max_retry);
+        BLE_SRV_LOGI(TAG, "Waiting for NTP sync... (%d/%d)", retry + 1, max_retry);
         vTaskDelay(pdMS_TO_TICKS(NTP_RETRY_INTERVAL_MS));
         retry++;
     }
 
     if (s_ntp_stop) {
-        ESP_LOGI(TAG, "NTP sync stopped by deinit");
         BLE_SRV_LOGI(TAG, "NTP sync task stopped");
     } else if (success) {
-        ESP_LOGI(TAG, "NTP sync completed successfully");
         BLE_SRV_LOGI(TAG, "NTP sync completed successfully");
     } else {
-        ESP_LOGE(TAG, "NTP sync timed out");
         BLE_SRV_LOGE(TAG, "NTP sync timed out");
     }
 
@@ -113,7 +107,6 @@ bool ble_srv_ntp_sync(void)
 {
 #ifdef CONFIG_BLE_SRV_NTP_ENABLED
     if (s_ntp_task) {
-        ESP_LOGW(TAG, "NTP sync already in progress");
         BLE_SRV_LOGW(TAG, "NTP sync already in progress");
         return true;
     }
@@ -122,16 +115,14 @@ bool ble_srv_ntp_sync(void)
     BaseType_t ret = xTaskCreate(ntp_sync_task, "ntp_sync", 4096,
                                   xTaskGetCurrentTaskHandle(), 2, &s_ntp_task);
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create NTP sync task");
+        BLE_SRV_LOGE(TAG, "Failed to create NTP sync task");
         s_ntp_task = NULL;
         return false;
     }
 
-    ESP_LOGI(TAG, "NTP sync task started");
     BLE_SRV_LOGI(TAG, "NTP sync started");
     return true;
 #else
-    ESP_LOGW(TAG, "NTP is not enabled in configuration");
     BLE_SRV_LOGW(TAG, "NTP is not enabled in configuration");
     return false;
 #endif
@@ -151,7 +142,6 @@ void ble_srv_ntp_deinit(void)
     if (esp_sntp_enabled()) {
         esp_sntp_stop();
     }
-    ESP_LOGI(TAG, "NTP deinitialized");
     BLE_SRV_LOGI(TAG, "NTP deinitialized");
 #endif
 }

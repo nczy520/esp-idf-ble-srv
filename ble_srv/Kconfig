@@ -191,6 +191,16 @@ menu "BLE Service"
                 Enable log system that stores logs to LittleFS or SD card.
                 Logs can be browsed and downloaded via HTTP server or BLE.
 
+        config BLE_SRV_LOG_CONSOLE_ENABLED
+            bool "Print logs to ESP-IDF console"
+            default y
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                When enabled, BLE_SRV_LOGx macros will also output to the ESP-IDF
+                console via ESP_LOGx. This replaces the need to call both ESP_LOGx
+                and BLE_SRV_LOGx separately. Disable this to suppress console output
+                and only persist logs to storage.
+
         config BLE_SRV_LOG_SD_ENABLED
             bool "Enable SD Card Support"
             default n

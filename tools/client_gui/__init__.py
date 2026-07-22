@@ -284,6 +284,8 @@ class BleDeviceManager:
         
         # 设置页面对象用于UI更新
         self.ble.set_page(page)
+        # 注入受全局锁保护的刷新函数，使 ble_core 的 UI 刷新与各 handler 串行化，避免并发 page.update 竞争
+        self.ble.set_safe_update(self.handlers.connection.safe_update)
         
         # 初始化连接状态UI（未连接状态）
         self.handlers.connection.update_connection_ui(False)

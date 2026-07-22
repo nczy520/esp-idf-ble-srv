@@ -50,7 +50,9 @@ typedef struct {
 #define BLE_SRV_QUEUE_LEN     32
 #define BLE_SRV_TASK_STACK    8192
 #define BLE_SRV_TASK_PRIO     6
-#define BLE_SRV_MSG_POOL_SIZE 8
+// 池容量需能容纳一个 BT OTA 滑动窗口（12 包）加并发的 MTU/订阅/日志/命令等消息，
+// 否则 GATT 写请求异步化后，窗口期夹带其它写会瞬时耗尽池导致丢包。与 QUEUE_LEN 对齐。
+#define BLE_SRV_MSG_POOL_SIZE 32
 
 bool ble_srv_msg_init(void);
 void ble_srv_msg_deinit(void);

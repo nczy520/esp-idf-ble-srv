@@ -509,28 +509,67 @@ void ble_srv_log_write(ble_srv_log_level_t level, const char *tag, const char *f
         return;
     }
 
-    char line[BLE_SRV_LOG_LINE_SIZE];
-    char ts_buf[64];
-    ble_srv_log_format_timestamp(ts_buf, sizeof(ts_buf));
-
-    int prefix_len = snprintf(line, sizeof(line), "%s [%s] [%s] ",
-                              ts_buf, s_level_prefix[level], tag ? tag : "");
+    char body[BLE_SRV_LOG_LINE_SIZE];
 
     va_list ap;
     va_start(ap, fmt);
-    int body_len = vsnprintf(line + prefix_len, sizeof(line) - prefix_len, fmt, ap);
+    int body_len = vsnprintf(body, sizeof(body), fmt, ap);
     va_end(ap);
 
-    if (body_len < 0 || body_len >= (int)(sizeof(line) - prefix_len)) {
-        body_len = (int)(sizeof(line) - prefix_len - 1);
+    if (body_len < 0) {
+        body_len = 0;
     }
+    if (body_len >= (int)sizeof(body)) {
+        body_len = (int)sizeof(body) - 1;
+    }
+    body[body_len] = '\0';
 
-    line[prefix_len + body_len] = '\n';
-    line[prefix_len + body_len + 1] = '\0';
-
-    printf("%s", line);
+#ifdef CONFIG_BLE_SRV_LOG_CONSOLE_ENABLED
+    switch (level) {
+    case BLE_SRV_LOG_LEVEL_ERROR:
+        ESP_LOGE(tag, "%s", body);
+        break;
+    case BLE_SRV_LOG_LEVEL_WARN:
+        ESP_LOGW(tag, "%s", body);
+        break;
+    case BLE_SRV_LOG_LEVEL_INFO:
+        ESP_LOGI(tag, "%s", body);
+        break;
+    case BLE_SRV_LOG_LEVEL_DEBUG:
+        ESP_LOGD(tag, "%s", body);
+        break;
+    case BLE_SRV_LOG_LEVEL_VERBOSE:
+        ESP_LOGV(tag, "%s", body);
+        break;
+    default:
+        break;
+    }
+#endif
 
     if (s_log_queue && s_storage != BLE_SRV_LOG_STORAGE_NONE) {
+        char line[BLE_SRV_LOG_LINE_SIZE];
+        char ts_buf[64];
+        ble_srv_log_format_timestamp(ts_buf, sizeof(ts_buf));
+
+        int prefix_len = snprintf(line, sizeof(line), "%s [%s] [%s] ",
+                                  ts_buf, s_level_prefix[level], tag ? tag : "");
+        if (prefix_len < 0) {
+            prefix_len = 0;
+        }
+        if (prefix_len > (int)sizeof(line) - 2) {
+            prefix_len = (int)sizeof(line) - 2;
+        }
+
+        int avail = (int)sizeof(line) - prefix_len - 2;
+        int copy_len = body_len;
+        if (copy_len > avail) {
+            copy_len = avail;
+        }
+
+        memcpy(line + prefix_len, body, copy_len);
+        line[prefix_len + copy_len] = '\n';
+        line[prefix_len + copy_len + 1] = '\0';
+
         xQueueSend(s_log_queue, line, pdMS_TO_TICKS(10));
     }
 }
@@ -541,7 +580,9 @@ void ble_srv_log_write_raw(const char *msg)
         return;
     }
 
+#ifdef CONFIG_BLE_SRV_LOG_CONSOLE_ENABLED
     printf("%s", msg);
+#endif
 
     if (s_log_queue && s_storage != BLE_SRV_LOG_STORAGE_NONE) {
         char line[BLE_SRV_LOG_LINE_SIZE];

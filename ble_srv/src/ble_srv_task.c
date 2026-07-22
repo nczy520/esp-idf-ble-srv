@@ -28,7 +28,7 @@ bool ble_srv_msg_init(void)
 {
     s_pool_mutex = xSemaphoreCreateMutex();
     if (!s_pool_mutex) {
-        ESP_LOGE(TAG, "Failed to create pool mutex");
+        BLE_SRV_LOGE(TAG, "Failed to create pool mutex");
         return false;
     }
 
@@ -38,7 +38,7 @@ bool ble_srv_msg_init(void)
 
     s_msg_queue = xQueueCreate(BLE_SRV_QUEUE_LEN, sizeof(ble_srv_msg_t *));
     if (!s_msg_queue) {
-        ESP_LOGE(TAG, "Failed to create message queue");
+        BLE_SRV_LOGE(TAG, "Failed to create message queue");
         vSemaphoreDelete(s_pool_mutex);
         return false;
     }
@@ -83,10 +83,30 @@ static void msg_pool_free(ble_srv_msg_t *msg)
 bool ble_srv_msg_send(ble_srv_msg_type_t type, const uint8_t *data, uint16_t data_len,
                       uint16_t attr_handle, uint16_t conn_handle, TickType_t wait)
 {
+    bool is_isr = (xTaskGetCurrentTaskHandle() == NULL);
+
     ble_srv_msg_t *msg;
+    // 任务上下文允许在 wait 时限内轮询等待池槽回收，避免池瞬时耗尽导致
+    // 关键消息（尤其 OTA 无响应写命令）被静默丢弃。ISR 上下文不可阻塞。
     if (!msg_pool_alloc(&msg)) {
-        ESP_LOGW(TAG, "Message pool exhausted");
-        return false;
+        bool got = false;
+        if (!is_isr && wait > 0) {
+            const TickType_t step = pdMS_TO_TICKS(5) ? pdMS_TO_TICKS(5) : 1;
+            TickType_t waited = 0;
+            while (waited < wait) {
+                TickType_t d = (wait - waited) < step ? (wait - waited) : step;
+                vTaskDelay(d);
+                waited += d;
+                if (msg_pool_alloc(&msg)) {
+                    got = true;
+                    break;
+                }
+            }
+        }
+        if (!got) {
+            BLE_SRV_LOGW(TAG, "Message pool exhausted");
+            return false;
+        }
     }
 
     msg->type = type;
@@ -98,7 +118,7 @@ bool ble_srv_msg_send(ble_srv_msg_type_t type, const uint8_t *data, uint16_t dat
     }
 
     BaseType_t ok;
-    if (xTaskGetCurrentTaskHandle() == NULL) {
+    if (is_isr) {
         BaseType_t hpw;
         ok = xQueueSendFromISR(s_msg_queue, &msg, &hpw);
         portYIELD_FROM_ISR(hpw);
@@ -108,7 +128,7 @@ bool ble_srv_msg_send(ble_srv_msg_type_t type, const uint8_t *data, uint16_t dat
 
     if (ok != pdTRUE) {
         msg_pool_free(msg);
-        ESP_LOGW(TAG, "Queue full, dropping message type=%d", type);
+        BLE_SRV_LOGW(TAG, "Queue full, dropping message type=%d", type);
         return false;
     }
 
@@ -124,7 +144,7 @@ void ble_srv_task_start(void)
     BaseType_t ret = xTaskCreate(ble_srv_task, "ble_srv", BLE_SRV_TASK_STACK,
                                   NULL, BLE_SRV_TASK_PRIO, &s_srv_task);
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create ble_srv task");
+        BLE_SRV_LOGE(TAG, "Failed to create ble_srv task");
     }
 }
 
@@ -139,7 +159,7 @@ void ble_srv_task_stop(void)
 static void ble_srv_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "ble_srv task started");
+    BLE_SRV_LOGI(TAG, "ble_srv task started");
 
     ble_srv_msg_t *msg;
     while (xQueueReceive(s_msg_queue, &msg, portMAX_DELAY) == pdTRUE) {
@@ -147,7 +167,7 @@ static void ble_srv_task(void *arg)
         msg_pool_free(msg);
     }
 
-    ESP_LOGI(TAG, "ble_srv task exiting");
+    BLE_SRV_LOGI(TAG, "ble_srv task exiting");
 }
 
 static void dispatch_msg(ble_srv_msg_t *msg)
@@ -205,7 +225,7 @@ static void dispatch_msg(ble_srv_msg_t *msg)
         ble_srv_schedule_restart_internal(*(uint32_t *)msg->data);
         break;
     default:
-        ESP_LOGW(TAG, "Unknown message type: %d", msg->type);
+        BLE_SRV_LOGW(TAG, "Unknown message type: %d", msg->type);
         break;
     }
 }

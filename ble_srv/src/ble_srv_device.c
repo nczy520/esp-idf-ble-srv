@@ -83,14 +83,14 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
         float temp = 0.0f;
         if (ble_srv_temp_sensor_read(&temp)) {
             info->temperature_celsius = temp;
-            ESP_LOGI(TAG, "Temperature: %.2f°C", temp);
+            BLE_SRV_LOGI(TAG, "Temperature: %.2f°C", temp);
         } else {
             info->temperature_celsius = -999.0f;
-            ESP_LOGW(TAG, "Failed to read temperature");
+            BLE_SRV_LOGW(TAG, "Failed to read temperature");
         }
     } else {
         info->temperature_celsius = -999.0f;
-        ESP_LOGI(TAG, "Temperature sensor not supported");
+        BLE_SRV_LOGI(TAG, "Temperature sensor not supported");
     }
 
     info->reset_reason = (uint8_t)esp_reset_reason();
@@ -100,7 +100,7 @@ bool ble_srv_get_device_info(ble_srv_device_info_t *info)
     time(&now);
     info->current_time = (uint32_t)now;
 
-    ESP_LOGI(TAG, "Device: %s, Flash: %s, MAC: %s, Ver: %s, CPU: %luMHz/%d cores, Temp: %.2f°C, Uptime: %lus, Reset: %d, Time: %lu",
+    BLE_SRV_LOGI(TAG, "Device: %s, Flash: %s, MAC: %s, Ver: %s, CPU: %luMHz/%d cores, Temp: %.2f°C, Uptime: %lus, Reset: %d, Time: %lu",
              info->chip_name, info->flash_size, info->mac_address,
              info->version, (unsigned long)info->cpu_freq_mhz, info->cpu_cores, info->temperature_celsius,
              (unsigned long)info->uptime_seconds, info->reset_reason, (unsigned long)info->current_time);
@@ -141,7 +141,7 @@ bool ble_srv_get_memory_info(ble_srv_memory_info_t *info)
     info->psram_largest = 0;
 #endif
 
-    ESP_LOGI(TAG, "Memory: INT[%lu/%lu min=%lu lg=%lu] DMA=%lu TOTAL=%lu PSRAM[%lu/%lu min=%lu lg=%lu] tasks=%u stack=%u",
+    BLE_SRV_LOGI(TAG, "Memory: INT[%lu/%lu min=%lu lg=%lu] DMA=%lu TOTAL=%lu PSRAM[%lu/%lu min=%lu lg=%lu] tasks=%u stack=%u",
              (unsigned long)info->internal_free, (unsigned long)info->internal_total,
              (unsigned long)info->internal_min_free, (unsigned long)info->internal_largest,
              (unsigned long)info->dma_free, (unsigned long)info->total_free,
@@ -176,7 +176,7 @@ bool ble_srv_get_cpu_info(ble_srv_cpu_info_t *info)
         strncpy(info->idf_version, idf_ver, sizeof(info->idf_version) - 1);
     }
 
-    ESP_LOGI(TAG, "CPU: freq=%luMHz/%d cores rev%d, uptime=%lus, features=0x%lx, tasks=%u, IDF=%s",
+    BLE_SRV_LOGI(TAG, "CPU: freq=%luMHz/%d cores rev%d, uptime=%lus, features=0x%lx, tasks=%u, IDF=%s",
              (unsigned long)info->cpu_freq_mhz, info->cpu_cores, info->chip_revision,
              (unsigned long)info->uptime_seconds, (unsigned long)info->features,
              info->task_count, info->idf_version);
@@ -230,7 +230,7 @@ bool ble_srv_get_flash_info(ble_srv_flash_info_t *info)
         strncpy(info->running_partition, running->label, sizeof(info->running_partition) - 1);
     }
 
-    ESP_LOGI(TAG, "Flash: total=%lu, used=%llu, free=%lu, partitions=%d, speed=%dMHz, running=%s",
+    BLE_SRV_LOGI(TAG, "Flash: total=%lu, used=%llu, free=%lu, partitions=%d, speed=%dMHz, running=%s",
              (unsigned long)info->flash_total, (unsigned long long)used,
              (unsigned long)info->flash_free, info->partition_count,
              info->flash_speed_mhz, info->running_partition);
@@ -257,9 +257,14 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
         count++;
         it = esp_partition_next(it);
     }
+    // esp_partition_find 返回的迭代器仅在遍历到末尾（返回 NULL）时自动释放；
+    // 命中 index 后提前 break 需手动释放，否则每次调用都会泄漏迭代器句柄。
+    if (it != NULL) {
+        esp_partition_iterator_release(it);
+    }
 
     if (!found) {
-        ESP_LOGW(TAG, "Partition index %d not found", index);
+        BLE_SRV_LOGW(TAG, "Partition index %d not found", index);
         return false;
     }
 
@@ -269,7 +274,7 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
     info->type = found->type;
     info->subtype = found->subtype;
 
-    ESP_LOGI(TAG, "Partition[%d]: %s @0x%lx size=%lu type=%d subtype=%d",
+    BLE_SRV_LOGI(TAG, "Partition[%d]: %s @0x%lx size=%lu type=%d subtype=%d",
              index, info->label, (unsigned long)info->address,
              (unsigned long)info->size, info->type, info->subtype);
 
@@ -278,7 +283,7 @@ bool ble_srv_get_partition_info(uint8_t index, ble_srv_partition_info_t *info)
 
 void ble_srv_restart_device(void)
 {
-    ESP_LOGI(TAG, "Restarting device...");
+    BLE_SRV_LOGI(TAG, "Restarting device...");
     BLE_SRV_LOGI(TAG, "Device restart requested");
     ble_srv_schedule_restart(BLE_RESTART_DELAY_MS);
 }

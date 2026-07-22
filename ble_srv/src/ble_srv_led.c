@@ -226,9 +226,9 @@ static void ble_srv_led_effect_task(void *arg)
             xSemaphoreGive(s_lock);
         } else {
             lock_fail_count++;
-            ESP_LOGW(TAG, "Failed to take LED lock in effect task (count=%d)", lock_fail_count);
+            BLE_SRV_LOGW(TAG, "Failed to take LED lock in effect task (count=%d)", lock_fail_count);
             if (lock_fail_count > 10) {
-                ESP_LOGE(TAG, "LED lock failed too many times, exiting effect task");
+                BLE_SRV_LOGE(TAG, "LED lock failed too many times, exiting effect task");
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(LED_LOCK_RETRY_MS));
@@ -240,7 +240,7 @@ static void ble_srv_led_effect_task(void *arg)
         }
 
         if (effect != last_effect) {
-            ESP_LOGI(TAG, "Effect running: effect=%d, speed=%d", effect, speed);
+            BLE_SRV_LOGI(TAG, "Effect running: effect=%d, speed=%d", effect, speed);
             last_effect = effect;
         }
 
@@ -276,7 +276,7 @@ static void ble_srv_led_effect_task(void *arg)
 static void ble_srv_led_start_effect(void)
 {
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGW(TAG, "Failed to take LED lock in start_effect");
+        BLE_SRV_LOGW(TAG, "Failed to take LED lock in start_effect");
         return;
     }
 
@@ -292,7 +292,7 @@ static void ble_srv_led_start_effect(void)
         s_effect_task_done = false;
     }
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create effect task");
+        BLE_SRV_LOGE(TAG, "Failed to create effect task");
         s_effect_task = NULL;
     }
 
@@ -304,7 +304,7 @@ static void ble_srv_led_stop_effect(uint32_t wait_ms)
     TaskHandle_t task = NULL;
 
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGW(TAG, "Failed to take LED lock in stop_effect");
+        BLE_SRV_LOGW(TAG, "Failed to take LED lock in stop_effect");
         return;
     }
 
@@ -335,13 +335,13 @@ static void ble_srv_led_stop_effect(uint32_t wait_ms)
 bool ble_srv_led_init(void)
 {
     if (s_initialized) {
-        ESP_LOGW(TAG, "LED already initialized");
+        BLE_SRV_LOGW(TAG, "LED already initialized");
         return true;
     }
 
     s_lock = xSemaphoreCreateMutex();
     if (!s_lock) {
-        ESP_LOGE(TAG, "Failed to create LED lock");
+        BLE_SRV_LOGE(TAG, "Failed to create LED lock");
         return false;
     }
 
@@ -355,7 +355,7 @@ bool ble_srv_led_init(void)
 
     esp_err_t ret = rmt_new_tx_channel(&chan_cfg, &s_led_chan);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create RMT TX channel: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "Failed to create RMT TX channel: %s", esp_err_to_name(ret));
         vSemaphoreDelete(s_lock);
         s_lock = NULL;
         return false;
@@ -364,7 +364,7 @@ bool ble_srv_led_init(void)
     rmt_copy_encoder_config_t copy_encoder_cfg = {};
     ret = rmt_new_copy_encoder(&copy_encoder_cfg, &s_copy_encoder);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create copy encoder: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "Failed to create copy encoder: %s", esp_err_to_name(ret));
         rmt_del_channel(s_led_chan);
         s_led_chan = NULL;
         vSemaphoreDelete(s_lock);
@@ -374,7 +374,7 @@ bool ble_srv_led_init(void)
 
     ret = rmt_enable(s_led_chan);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to enable RMT channel: %s", esp_err_to_name(ret));
+        BLE_SRV_LOGE(TAG, "Failed to enable RMT channel: %s", esp_err_to_name(ret));
         rmt_del_encoder(s_copy_encoder);
         rmt_del_channel(s_led_chan);
         s_copy_encoder = NULL;
@@ -394,7 +394,7 @@ bool ble_srv_led_init(void)
     s_effect = BLE_LED_EFFECT_NONE;
     s_effect_task = NULL;
 
-    ESP_LOGI(TAG, "WS2812 LED initialized on GPIO %d", BLE_LED_GPIO);
+    BLE_SRV_LOGI(TAG, "WS2812 LED initialized on GPIO %d", BLE_LED_GPIO);
     BLE_SRV_LOGI(TAG, "LED initialized on GPIO %d", BLE_LED_GPIO);
     return true;
 }
@@ -429,19 +429,18 @@ void ble_srv_led_deinit(void)
         s_lock = NULL;
     }
 
-    ESP_LOGI(TAG, "LED deinitialized");
     BLE_SRV_LOGI(TAG, "LED deinitialized");
 }
 
 bool ble_srv_led_set_on(bool on)
 {
     if (!s_initialized) {
-        ESP_LOGE(TAG, "LED not initialized");
+        BLE_SRV_LOGE(TAG, "LED not initialized");
         return false;
     }
 
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to take LED lock in set_on");
+        BLE_SRV_LOGE(TAG, "Failed to take LED lock in set_on");
         return false;
     }
 
@@ -462,7 +461,6 @@ bool ble_srv_led_set_on(bool on)
         ble_srv_led_send_pixel(0, 0, 0);
     }
 
-    ESP_LOGI(TAG, "LED %s", on ? "ON" : "OFF");
     BLE_SRV_LOGI(TAG, "LED %s", on ? "ON" : "OFF");
     return true;
 }
@@ -470,7 +468,7 @@ bool ble_srv_led_set_on(bool on)
 bool ble_srv_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
 {
     if (!s_initialized) {
-        ESP_LOGE(TAG, "LED not initialized");
+        BLE_SRV_LOGE(TAG, "LED not initialized");
         return false;
     }
 
@@ -478,7 +476,7 @@ bool ble_srv_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
     uint8_t r, g, b;
 
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to take LED lock in set_rgb");
+        BLE_SRV_LOGE(TAG, "Failed to take LED lock in set_rgb");
         return false;
     }
 
@@ -506,7 +504,6 @@ bool ble_srv_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
         xTaskNotify(effect_task, LED_EFFECT_NOTIFY_RESTART, eSetBits);
     }
 
-    ESP_LOGI(TAG, "LED RGB set: R=%d, G=%d, B=%d", red, green, blue);
     BLE_SRV_LOGI(TAG, "LED RGB set: R=%d, G=%d, B=%d", red, green, blue);
     return true;
 }
@@ -514,12 +511,12 @@ bool ble_srv_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
 bool ble_srv_led_set_effect(ble_led_effect_t effect, uint8_t speed)
 {
     if (!s_initialized) {
-        ESP_LOGE(TAG, "LED not initialized");
+        BLE_SRV_LOGE(TAG, "LED not initialized");
         return false;
     }
 
     if (effect > BLE_LED_EFFECT_STROBE) {
-        ESP_LOGW(TAG, "Invalid LED effect: %d", effect);
+        BLE_SRV_LOGW(TAG, "Invalid LED effect: %d", effect);
         return false;
     }
 
@@ -528,7 +525,7 @@ bool ble_srv_led_set_effect(ble_led_effect_t effect, uint8_t speed)
     }
 
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to take LED lock in set_effect");
+        BLE_SRV_LOGE(TAG, "Failed to take LED lock in set_effect");
         return false;
     }
 
@@ -554,7 +551,6 @@ bool ble_srv_led_set_effect(ble_led_effect_t effect, uint8_t speed)
         ble_srv_led_stop_effect(LED_STOP_EFFECT_WAIT_MS);
     }
 
-    ESP_LOGI(TAG, "LED effect set: %d, speed=%d", effect, speed);
     BLE_SRV_LOGI(TAG, "LED effect set: %d, speed=%d", effect, speed);
     return true;
 }
@@ -566,7 +562,7 @@ bool ble_srv_led_get_status(ble_led_status_t *status)
     }
 
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(LED_LOCK_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGE(TAG, "Failed to take LED lock in get_status");
+        BLE_SRV_LOGE(TAG, "Failed to take LED lock in get_status");
         return false;
     }
 

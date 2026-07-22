@@ -73,7 +73,7 @@ static void do_push_status(void)
         if (om) {
             int rc = ble_gatts_notify_custom(conn_handle, ota_status_handle, om);
             if (rc != 0) {
-                ESP_LOGW(TAG, "notify failed: rc=%d", rc);
+                BLE_SRV_LOGW(TAG, "notify failed: rc=%d", rc);
             }
         }
     }
@@ -92,7 +92,7 @@ static void reset_timer_cb(TimerHandle_t timer)
 void ble_srv_ota_reset_to_idle(void)
 {
     if (is_terminal_state(s_state)) {
-        ESP_LOGI(TAG, "Terminal state timeout, resetting to IDLE");
+        BLE_SRV_LOGI(TAG, "Terminal state timeout, resetting to IDLE");
         s_mode = BLE_OTA_MODE_NONE;
         s_state = BLE_OTA_STATE_IDLE;
         s_error = BLE_OTA_ERR_NONE;
@@ -114,7 +114,7 @@ bool ble_srv_ota_init(void)
     s_reset_timer = xTimerCreate("ota_reset", pdMS_TO_TICKS(BLE_OTA_RESET_DELAY_MS),
                                   pdFALSE, NULL, reset_timer_cb);
     if (!s_reset_timer) {
-        ESP_LOGE(TAG, "Failed to create reset timer");
+        BLE_SRV_LOGE(TAG, "Failed to create reset timer");
         return false;
     }
 
@@ -126,7 +126,7 @@ bool ble_srv_ota_init(void)
     s_fw_size = 0;
     s_bytes_received = 0;
     s_bytes_written = 0;
-    ESP_LOGI(TAG, "OTA module initialized");
+    BLE_SRV_LOGI(TAG, "OTA module initialized");
     return true;
 }
 
@@ -157,7 +157,7 @@ void ble_srv_ota_deinit(void)
 uint8_t ble_srv_ota_begin(ble_ota_mode_t mode)
 {
     if (mode == BLE_OTA_MODE_NONE) {
-        ESP_LOGE(TAG, "begin: invalid mode");
+        BLE_SRV_LOGE(TAG, "begin: invalid mode");
         return BLE_OTA_INVALID_GEN;
     }
 
@@ -176,7 +176,7 @@ uint8_t ble_srv_ota_begin(ble_ota_mode_t mode)
     }
 
     if (s_state != BLE_OTA_STATE_IDLE) {
-        ESP_LOGW(TAG, "begin: OTA busy, mode=%d, state=%d", s_mode, s_state);
+        BLE_SRV_LOGW(TAG, "begin: OTA busy, mode=%d, state=%d", s_mode, s_state);
         return BLE_OTA_INVALID_GEN;
     }
 
@@ -196,7 +196,7 @@ uint8_t ble_srv_ota_begin(ble_ota_mode_t mode)
 
     do_push_status();
 
-    ESP_LOGI(TAG, "OTA session begun: mode=%s, gen=%u",
+    BLE_SRV_LOGI(TAG, "OTA session begun: mode=%s, gen=%u",
              mode == BLE_OTA_MODE_BT ? "BT" : (mode == BLE_OTA_MODE_URL ? "URL" : "?"),
              gen);
     return gen;
@@ -220,7 +220,7 @@ void ble_srv_ota_abort(ble_ota_err_t reason)
 
     do_push_status();
 
-    ESP_LOGW(TAG, "OTA abort requested, reason=%d, prev_state=%d, mode=%d", reason, prev_state, mode);
+    BLE_SRV_LOGW(TAG, "OTA abort requested, reason=%d, prev_state=%d, mode=%d", reason, prev_state, mode);
 
     if (mode == BLE_OTA_MODE_BT) {
         ble_srv_ota_bt_handle_abort();
@@ -232,7 +232,7 @@ void ble_srv_ota_abort(ble_ota_err_t reason)
 void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error)
 {
     if (!gen_valid(gen)) {
-        ESP_LOGW(TAG, "finish: stale gen=%u, current=%u, ignoring", gen, s_session_gen);
+        BLE_SRV_LOGW(TAG, "finish: stale gen=%u, current=%u, ignoring", gen, s_session_gen);
         return;
     }
 
@@ -259,12 +259,12 @@ void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error
 
     do_push_status();
 
-    ESP_LOGI(TAG, "OTA session finished: mode=%s, result=%d, error=%d, gen=%u",
+    BLE_SRV_LOGI(TAG, "OTA session finished: mode=%s, result=%d, error=%d, gen=%u",
              finished_mode == BLE_OTA_MODE_BT ? "BT" : (finished_mode == BLE_OTA_MODE_URL ? "URL" : "?"),
              result, error, gen);
 
     if (is_apply_ok) {
-        ESP_LOGI(TAG, "OTA apply OK, rebooting in 3s...");
+        BLE_SRV_LOGI(TAG, "OTA apply OK, rebooting in 3s...");
         ble_srv_schedule_restart(BLE_OTA_RESTART_DELAY_MS);
     }
 }

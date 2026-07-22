@@ -136,6 +136,7 @@ class BleCore:
         self._ota_fw_size = 0
         self._ota_start_time = 0
         self._ota_page = None
+        self._safe_update_fn = None
         self._ota_ack_event = None
         self._ota_url_status_callback = None
         self._ota_notify_started = False
@@ -169,6 +170,10 @@ class BleCore:
 
     def set_page(self, page):
         self._ota_page = page
+
+    def set_safe_update(self, fn):
+        """注入受全局锁保护的 page.update 包装，供 UI 刷新统一使用，避免与 handler 并发 update 竞争"""
+        self._safe_update_fn = fn
 
     def set_ota_url_status_callback(self, callback):
         self._ota_url_status_callback = callback
@@ -334,7 +339,10 @@ class BleCore:
                     pass
         finally:
             try:
-                self._ota_page.update()
+                if self._safe_update_fn:
+                    self._safe_update_fn()
+                else:
+                    self._ota_page.update()
             except Exception:
                 pass
 
@@ -966,13 +974,19 @@ class BleCore:
             self._ota_active = False
             return False, str(e)
 
+    @staticmethod
+    def _read_fw_file(fw_path):
+        with open(fw_path, 'rb') as f:
+            return f.read()
+
     async def ota_update(self, fw_path, progress_cb=None):
         if not os.path.exists(fw_path):
             return False, "固件文件不存在"
-        with open(fw_path, 'rb') as f:
-            fw_data = f.read()
+        # 读取整个固件并计算 CRC 是阻塞操作，放到线程池执行，避免卡住事件循环
+        loop = asyncio.get_event_loop()
+        fw_data = await loop.run_in_executor(None, self._read_fw_file, fw_path)
         fw_size = len(fw_data)
-        fw_crc = zlib.crc32(fw_data) & 0xFFFFFFFF
+        fw_crc = await loop.run_in_executor(None, lambda: zlib.crc32(fw_data) & 0xFFFFFFFF)
         fw_version, fw_ver_str = parse_esp_fw_version(fw_data)
         mtu = self.ble_client.mtu_size if self.ble_client else 247
         attr_overhead = 3
