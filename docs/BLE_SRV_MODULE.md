@@ -846,7 +846,28 @@ bool ble_srv_wifi_get_status(ble_wifi_status_t *status);
 
 ---
 
-### 自定义命令 API（ble_srv_gatt.h）
+### 自定义命令 API（ble_srv.h）
+
+自定义命令允许项目侧在引用 ble_srv 组件后，注册自己的命令处理逻辑，通过 BLE 自定义命令特征（UUID 0xFFEA）接收客户端写入的数据并返回响应。客户端需先订阅该特征的 NOTIFY，写入命令后通过 NOTIFY 接收响应。
+
+#### ble_srv_custom_cmd_cb_t
+
+```c
+typedef int (*ble_srv_custom_cmd_cb_t)(uint16_t conn_handle, const uint8_t *data, uint16_t data_len,
+                                        uint8_t *resp_buf, size_t resp_buf_len, uint16_t *resp_len);
+```
+
+自定义命令处理回调函数类型。客户端写入自定义命令特征时由 ble_srv 任务线程调用。
+
+**参数**:
+- `conn_handle` — 当前 BLE 连接句柄
+- `data` / `data_len` — 客户端写入的原始数据
+- `resp_buf` / `resp_buf_len` — 响应缓冲区及容量（容量固定 512 字节）
+- `resp_len` — 输出实际响应长度（0 表示无响应）
+
+**返回值**:
+- `0` — 处理成功，若 `resp_len > 0` 则通过 NOTIFY 发送响应
+- 非 `0` — 处理失败，不发送响应
 
 #### ble_srv_gatt_set_custom_cmd_callback
 
@@ -854,52 +875,47 @@ bool ble_srv_wifi_get_status(ble_wifi_status_t *status);
 void ble_srv_gatt_set_custom_cmd_callback(ble_srv_custom_cmd_cb_t cb);
 ```
 
-注册自定义命令处理回调函数。
-
-**参数**:
-- `cb` — 回调函数指针，格式为 `int callback(uint16_t conn_handle, const uint8_t *data, uint16_t data_len, uint8_t *resp_buf, uint16_t resp_buf_size, uint16_t *out_resp_len)`
-
-**回调返回值**:
-- `0` — 处理成功，如有响应数据则通过 NOTIFY 发送
-- 非 `0` — 处理失败，不发送响应
+注册自定义命令处理回调。传入 `NULL` 可取消注册。需在 `ble_srv_init()` 之后调用。回调运行在 ble_srv 任务线程，可安全执行较重操作（但避免长时间阻塞）。
 
 **使用示例**:
 
 ```c
 static int my_custom_handler(uint16_t conn_handle, const uint8_t *data, uint16_t data_len,
-                              uint8_t *resp_buf, uint16_t resp_buf_size, uint16_t *out_resp_len)
+                              uint8_t *resp_buf, size_t resp_buf_len, uint16_t *resp_len)
 {
-    // 处理接收到的自定义命令
-    if (data_len >= 1 && data[0] == 0x01) {
-        // 构造响应
-        resp_buf[0] = 0x01;
-        resp_buf[1] = 0xAA;
-        *out_resp_len = 2;
-        return 0;  // 成功，将通过 NOTIFY 发送响应
+    // 将输入作为文本命令处理
+    char cmd[64];
+    uint16_t n = data_len < sizeof(cmd) - 1 ? data_len : sizeof(cmd) - 1;
+    memcpy(cmd, data, n);
+    cmd[n] = '\0';
+
+    if (strcmp(cmd, "ping") == 0) {
+        int len = snprintf((char *)resp_buf, resp_buf_len, "pong");
+        *resp_len = (uint16_t)len;
+        return 0;
     }
-    return -1;  // 失败
+    *resp_len = 0;
+    return -1;
 }
 
-// 初始化时注册
+// 在 ble_srv_init() 之后注册
 ble_srv_gatt_set_custom_cmd_callback(my_custom_handler);
 ```
+
+完整的示例代码参见 `examples/basic/main/main.c`，其中实现了 `help`、`time`、`uptime`、`heap`、`version`、`echo`、`reboot` 等命令。
 
 #### ble_srv_gatt_custom_cmd_notify
 
 ```c
-bool ble_srv_gatt_custom_cmd_notify(uint16_t conn_handle, const uint8_t *data, uint16_t data_len);
+void ble_srv_gatt_custom_cmd_notify(uint16_t conn_handle, const uint8_t *data, uint16_t data_len);
 ```
 
-主动发送自定义命令通知数据到客户端。
+主动向客户端发送自定义命令通知数据。需客户端已订阅 custom_cmd 特征，否则调用无效。用于在命令回调之外异步推送数据，例如周期性状态上报。
 
 **参数**:
 - `conn_handle` — BLE 连接句柄
 - `data` — 要发送的数据指针
 - `data_len` — 数据长度
-
-**返回值**:
-- `true` — 发送成功
-- `false` — 发送失败（未订阅或句柄无效）
 
 ### NTP API（ble_srv_wifi.h，需要 CONFIG_BLE_SRV_NTP_ENABLED）
 

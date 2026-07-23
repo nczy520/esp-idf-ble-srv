@@ -24,6 +24,7 @@ void ble_srv_gatt_set_log_notify_enabled(bool enabled);
 void ble_srv_gatt_set_ota_status_notify_enabled(bool enabled);
 void ble_srv_gatt_set_wifi_status_notify_enabled(bool enabled);
 void ble_srv_gatt_set_custom_cmd_notify_enabled(bool enabled);
+bool ble_srv_gatt_get_custom_cmd_notify_enabled(void);
 
 // per-connection 认证状态管理。
 // 写入正确 PIN 后由 GATT 写回调设置 authenticated，断连时由 core 调用 release 释放。
