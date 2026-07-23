@@ -61,10 +61,75 @@ static uint16_t s_led_color_chr_val_handle = 0;
 static uint16_t s_led_effect_chr_val_handle = 0;
 #endif
 
+// 认证特征 notify 协议：单字节结果码，0x00=失败 0x01=成功。
+// 写入正确 PIN 后设备主动 notify 通知结果，取代原先"写后立即读"的竞态方案。
+#define BLE_SRV_AUTH_NOTIFY_FAIL   0x00
+#define BLE_SRV_AUTH_NOTIFY_OK     0x01
+
+// 单连接场景下连接句柄被存为全局态；按 BLE 规范连接句柄上限为 1，故可固定 1 槽。
+// 若未来支持多连接，仅需把此处改为按 conn_handle 索引的数组。
+#define BLE_SRV_AUTH_MAX_CONN      1
+
+typedef struct {
+    bool in_use;
+    bool authenticated;
+} ble_srv_auth_slot_t;
+
+static ble_srv_auth_slot_t s_auth_slots[BLE_SRV_AUTH_MAX_CONN] = {0};
+
+static ble_srv_auth_slot_t *ble_srv_gatt_get_auth_slot(uint16_t conn_handle, bool create)
+{
+    // 单槽实现：未占用则按 create 占用；已占用则返回该槽。
+    (void)conn_handle;
+    if (!s_auth_slots[0].in_use) {
+        if (create) {
+            s_auth_slots[0].in_use = true;
+            s_auth_slots[0].authenticated = false;
+            return &s_auth_slots[0];
+        }
+        return NULL;
+    }
+    return &s_auth_slots[0];
+}
+
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
-static uint16_t s_srv_auth_chr_val_handle = 0;
 static char s_auth_pin[BLE_SRV_AUTH_PIN_MAX_LEN + 1] = {0};
-static volatile bool s_conn_authenticated = false;
+
+bool ble_srv_gatt_acquire_auth_slot(uint16_t conn_handle)
+{
+    ble_srv_auth_slot_t *slot = ble_srv_gatt_get_auth_slot(conn_handle, true);
+    return slot != NULL;
+}
+
+void ble_srv_gatt_release_auth_slot(uint16_t conn_handle)
+{
+    (void)conn_handle;
+    s_auth_slots[0].in_use = false;
+    s_auth_slots[0].authenticated = false;
+}
+
+bool ble_srv_gatt_is_authenticated(uint16_t conn_handle)
+{
+    ble_srv_auth_slot_t *slot = ble_srv_gatt_get_auth_slot(conn_handle, false);
+    return slot ? slot->authenticated : false;
+}
+#else
+bool ble_srv_gatt_acquire_auth_slot(uint16_t conn_handle)
+{
+    (void)conn_handle;
+    return true;
+}
+
+void ble_srv_gatt_release_auth_slot(uint16_t conn_handle)
+{
+    (void)conn_handle;
+}
+
+bool ble_srv_gatt_is_authenticated(uint16_t conn_handle)
+{
+    (void)conn_handle;
+    return true;
+}
 #endif
 
 static uint16_t s_srv_log_chr_val_handle = 0;
@@ -109,6 +174,7 @@ static const ble_uuid16_t s_led_effect_chr_uuid = BLE_UUID16_INIT(0xFFB3);
 
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
 static const ble_uuid16_t s_auth_chr_uuid = BLE_UUID16_INIT(BLE_SRV_AUTH_CHAR_UUID);
+static uint16_t s_srv_auth_chr_val_handle = 0;
 #endif
 
 static const ble_uuid16_t s_log_chr_uuid = BLE_UUID16_INIT(BLE_SRV_LOG_CHAR_UUID);
@@ -307,15 +373,14 @@ static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct bl
 
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
     if (attr_handle == s_srv_auth_chr_val_handle) {
-        uint8_t authed = s_conn_authenticated ? 1 : 0;
+        // 主动通知取代"写后立即读"：读特征仅用于兼容旧客户端，返回当前 per-conn 状态。
+        uint8_t authed = ble_srv_gatt_is_authenticated(conn_handle) ? 1 : 0;
         rc = os_mbuf_append(ctxt->om, &authed, sizeof(authed));
         return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
-    if (!s_conn_authenticated) {
-        // 仅拒绝本次读，不立即断连：写请求经消息队列异步串行处理，而读在 Host 线程
-        // 同步判定。客户端"写 PIN 后立即读"时，PIN 写可能仍在队列中未被处理，此处
-        // 会读到未认证状态；若立即断连会造成误断。返回错误码即可，客户端应在收到
-        // 认证成功通知后再读。显式的错误 PIN 断连仍由写路径负责。
+    if (!ble_srv_gatt_is_authenticated(conn_handle)) {
+        // 仅拒绝本次读，不立即断连：写路径会在 PIN 失败时主动 notify 并断连。
+        // 此处返回错误码即可，客户端应改为订阅 notify 等待认证结果。
         BLE_SRV_LOGW(TAG, "Read denied: not authenticated (handle=%d)", attr_handle);
         return BLE_SRV_AUTH_ERR_NOT_AUTH;
     }
@@ -458,15 +523,28 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
         }
         bool match = (strlen(s_auth_pin) == data_len &&
                       memcmp(data, s_auth_pin, data_len) == 0);
-        s_conn_authenticated = match;
+        // per-connection 记录认证结果，并主动 notify 客户端。
+        ble_srv_auth_slot_t *slot = ble_srv_gatt_get_auth_slot(conn_handle, true);
+        if (slot) {
+            slot->authenticated = match;
+        }
+        uint8_t notify_byte = match ? BLE_SRV_AUTH_NOTIFY_OK : BLE_SRV_AUTH_NOTIFY_FAIL;
+        struct os_mbuf *notify_om = ble_hs_mbuf_from_flat(&notify_byte, sizeof(notify_byte));
+        if (notify_om) {
+            int nrc = ble_gatts_notify_custom(conn_handle, s_srv_auth_chr_val_handle, notify_om);
+            if (nrc != 0) {
+                os_mbuf_free_chain(notify_om);
+            }
+        }
         if (match) {
             BLE_SRV_LOGI(TAG, "PIN authentication success (conn=%d)", conn_handle);
         } else {
             BLE_SRV_LOGW(TAG, "PIN authentication failed (conn=%d)", conn_handle);
+            ble_srv_auth_fail_disconnect(conn_handle);
         }
         return;
     }
-    if (!s_conn_authenticated) {
+    if (!ble_srv_gatt_is_authenticated(conn_handle)) {
         BLE_SRV_LOGW(TAG, "Write denied: not authenticated (handle=%d)", attr_handle);
         ble_srv_auth_fail_disconnect(conn_handle);
         return;
@@ -706,7 +784,8 @@ bool ble_srv_gatt_init(void)
     if (pin_len > BLE_SRV_AUTH_PIN_MAX_LEN) pin_len = BLE_SRV_AUTH_PIN_MAX_LEN;
     memcpy(s_auth_pin, pin, pin_len);
     s_auth_pin[pin_len] = '\0';
-    s_conn_authenticated = false;
+    s_auth_slots[0].in_use = false;
+    s_auth_slots[0].authenticated = false;
     BLE_SRV_LOGI(TAG, "PIN auth enabled, PIN length=%zu", pin_len);
 #endif
     return true;
@@ -742,67 +821,9 @@ uint16_t ble_srv_gatt_get_wifi_status_chr_val_handle(void)
     return s_wifi_status_chr_val_handle;
 }
 
-#ifdef CONFIG_BLE_SRV_AUTH_ENABLED
-bool ble_srv_gatt_is_auth_enabled(void)
-{
-    return true;
-}
-
-bool ble_srv_gatt_is_conn_authenticated(uint16_t conn_handle)
-{
-    if (conn_handle != ble_srv_get_conn_handle()) {
-        return false;
-    }
-    return s_conn_authenticated;
-}
-
-void ble_srv_gatt_set_conn_authenticated(uint16_t conn_handle, bool authed)
-{
-    if (conn_handle != ble_srv_get_conn_handle()) {
-        return;
-    }
-    s_conn_authenticated = authed;
-}
-
-void ble_srv_gatt_clear_auth_state(uint16_t conn_handle)
-{
-    (void)conn_handle;
-    s_conn_authenticated = false;
-    BLE_SRV_LOGI(TAG, "Auth state cleared (conn=%d)", conn_handle);
-}
-
-uint16_t ble_srv_gatt_get_auth_chr_val_handle(void)
-{
-    return s_srv_auth_chr_val_handle;
-}
-#else
-bool ble_srv_gatt_is_auth_enabled(void)
-{
-    return false;
-}
-
-bool ble_srv_gatt_is_conn_authenticated(uint16_t conn_handle)
-{
-    (void)conn_handle;
-    return true;
-}
-
-void ble_srv_gatt_set_conn_authenticated(uint16_t conn_handle, bool authed)
-{
-    (void)conn_handle;
-    (void)authed;
-}
-
-void ble_srv_gatt_clear_auth_state(uint16_t conn_handle)
-{
-    (void)conn_handle;
-}
-
-uint16_t ble_srv_gatt_get_auth_chr_val_handle(void)
-{
-    return 0;
-}
-#endif
+// 旧版 auth API（is_auth_enabled / is_conn_authenticated / set_conn_authenticated
+// / clear_auth_state）已被 per-conn 槽位接口 (release_auth_slot / is_authenticated)
+// 取代，统一由文件外层 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED 分支实现。
 
 bool ble_srv_gatt_log_notify_enabled(void)
 {

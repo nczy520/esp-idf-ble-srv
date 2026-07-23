@@ -19,12 +19,20 @@ const struct ble_gatt_svc_def *ble_srv_get_gatt_svcs(void);
 bool ble_srv_gatt_init(void);
 void ble_srv_gatt_deinit(void);
 
-void ble_srv_gatt_clear_auth_state(uint16_t conn_handle);
 void ble_srv_gatt_set_log_conn_handle(uint16_t conn_handle);
 void ble_srv_gatt_set_log_notify_enabled(bool enabled);
 void ble_srv_gatt_set_ota_status_notify_enabled(bool enabled);
 void ble_srv_gatt_set_wifi_status_notify_enabled(bool enabled);
 void ble_srv_gatt_set_custom_cmd_notify_enabled(bool enabled);
+
+// per-connection 认证状态管理。
+// 写入正确 PIN 后由 GATT 写回调设置 authenticated，断连时由 core 调用 release 释放。
+// 返回指定 conn_handle 的当前认证状态，未在槽位内时返回 false。
+bool ble_srv_gatt_is_authenticated(uint16_t conn_handle);
+// 占用 conn_handle 对应的认证槽位（每次新连接调用一次）。返回是否成功。
+bool ble_srv_gatt_acquire_auth_slot(uint16_t conn_handle);
+// 释放 conn_handle 对应的认证槽位；该连接再次建立时需要重新走 PIN 校验。
+void ble_srv_gatt_release_auth_slot(uint16_t conn_handle);
 
 uint16_t ble_srv_gatt_get_ota_status_chr_val_handle(void);
 uint16_t ble_srv_gatt_get_wifi_status_chr_val_handle(void);

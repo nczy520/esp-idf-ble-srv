@@ -184,17 +184,33 @@ class BLEDeviceClient:
 
     async def scan(self, timeout=3, select=False):
         print(f"扫描 BLE 设备（超时 {timeout}s）...")
-        devices = await BleakScanner.discover(timeout=timeout)
-        matched = []
-        for d in devices:
-            if d.name and (self.device_name is None or d.name.startswith(self.device_name)):
-                matched.append(d)
+        # 改用 callback-based 扫描，保证 macOS CoreBluetooth 后端也能拿到 RSSI
+        # （BleakScanner.discover() 在 macOS 下返回的设备 rssi 为 None）。
+        found = {}
+
+        def on_detect(device, advertising_data):
+            if device.name and (self.device_name is None or device.name.startswith(self.device_name)):
+                # 同地址多次广播时仅保留 RSSI 最佳的一条
+                prev = found.get(device.address)
+                cur_rssi = getattr(advertising_data, 'rssi', None)
+                if prev is None or (cur_rssi is not None and (prev[1] is None or cur_rssi > prev[1])):
+                    found[device.address] = (device, cur_rssi)
+
+        scanner = BleakScanner(detection_callback=on_detect)
+        await scanner.start()
+        try:
+            await asyncio.sleep(timeout)
+        finally:
+            await scanner.stop()
+
+        matched = [v[0] for v in found.values()]
         if not matched:
             print("未发现匹配的 BLE 设备")
             return None
         print(f"\n发现 {len(matched)} 个匹配设备:")
+        rssi_map = {addr: rssi for addr, (_, rssi) in found.items()}
         for i, d in enumerate(matched):
-            rssi = getattr(d, 'rssi', None)
+            rssi = rssi_map.get(d.address)
             rssi_str = f"  RSSI: {rssi} dBm" if rssi is not None else ""
             print(f"  {i+1}. {d.name} ({d.address}){rssi_str}")
         if not select:
@@ -246,6 +262,13 @@ class BLEDeviceClient:
             self.client = BleakClient(device, timeout=15, use_cached=False, disconnected_callback=on_disconnect)
             await self.client.connect()
             self.is_connected = True
+            # 主动请求 MTU=512，与设备 BLE_SRV_PREFERRED_MTU 对齐。
+            # 不支持或失败时回退到 bleak 报告的 mtu_size。
+            try:
+                if hasattr(self.client, 'set_mtu'):
+                    await self.client.set_mtu(512)
+            except Exception as e:
+                print(f"set_mtu 失败，使用默认 MTU: {e}")
             mtu = self.client.mtu_size if hasattr(self.client, 'mtu_size') else 247
             print(f"连接成功 (MTU={mtu})")
             if self.pin:
@@ -263,28 +286,45 @@ class BLEDeviceClient:
             return False
 
     async def authenticate(self, pin):
-        """通过写入PIN码进行GATT层认证"""
+        """通过写入 PIN 码并订阅 auth 特征 notify 等待结果。
+        设备在写回调中比较 PIN 后主动 notify 0x01(成功) / 0x00(失败)，
+        取代旧版"写后立即读"竞态方案。
+        """
         if not self.client or not self.client.is_connected:
             print("未连接设备")
             return False
         try:
             pin_bytes = pin.encode('utf-8')[:16]
-            await self.client.write_gatt_char(BLE_DM_AUTH_CHAR_UUID, pin_bytes, response=True)
-            data = await self.client.read_gatt_char(BLE_DM_AUTH_CHAR_UUID)
-            if data and data[0] == 1:
-                print("PIN认证成功")
-                return True
-            else:
-                print("PIN认证失败: 设备返回未认证状态")
-                return False
-        except BleakError as e:
-            if "not found" in str(e).lower() or "was not found" in str(e).lower():
-                print("设备不支持PIN认证，跳过认证")
-                return True
-            print(f"PIN认证失败: {e}")
-            return False
+            # 通过 asyncio.Event 等待设备 notify
+            auth_result = asyncio.Event()
+            auth_code = {'value': None}
+
+            def on_auth_notify(sender, data):
+                if data and len(data) >= 1:
+                    auth_code['value'] = data[0]
+                    auth_result.set()
+
+            await self.client.start_notify(BLE_DM_AUTH_CHAR_UUID, on_auth_notify)
+            try:
+                await self.client.write_gatt_char(BLE_DM_AUTH_CHAR_UUID, pin_bytes, response=True)
+                try:
+                    await asyncio.wait_for(auth_result.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    print("PIN认证超时：未收到设备通知")
+                    return False
+                if auth_code['value'] == 1:
+                    print("PIN认证成功")
+                    return True
+                else:
+                    print("PIN认证失败: 设备返回 0x00")
+                    return False
+            finally:
+                try:
+                    await self.client.stop_notify(BLE_DM_AUTH_CHAR_UUID)
+                except Exception:
+                    pass
         except Exception as e:
-            print(f"PIN认证失败: {e}")
+            print(f"PIN认证异常: {e}")
             return False
 
     def _on_disconnect(self, client):

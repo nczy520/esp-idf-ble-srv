@@ -37,6 +37,10 @@ static volatile uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static volatile bool s_advertising = false;
 static uint8_t s_own_addr_type = 0;
 
+// 当前连接的协商后 MTU。GATT 模块在 notify/分片时可参考该值。
+// BLE 默认 23，本地 preferred 设为 512，实际生效取决于对端是否发起 exchange。
+static volatile uint16_t s_active_mtu = 23;
+
 static char s_device_name[64] = {0};
 static TimerHandle_t s_restart_timer = NULL;
 
@@ -160,7 +164,11 @@ void ble_srv_core_handle_connect(uint16_t conn_handle)
 {
     s_conn_handle = conn_handle;
     s_advertising = false;
-    ble_srv_gatt_clear_auth_state(conn_handle);
+    // per-connection auth slot 初始化为未认证；客户端需写入正确 PIN。
+    // 与旧 s_conn_authenticated 单一全局变量不同，这里为每次连接分配独立槽。
+    if (!ble_srv_gatt_acquire_auth_slot(conn_handle)) {
+        BLE_SRV_LOGW(TAG, "No auth slot available for conn=%d", conn_handle);
+    }
     ble_srv_gatt_set_log_conn_handle(conn_handle);
 }
 
@@ -169,7 +177,8 @@ void ble_srv_core_handle_disconnect(uint16_t conn_handle)
     (void)conn_handle;
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_advertising = false;
-    ble_srv_gatt_clear_auth_state(conn_handle);
+    // 释放 per-conn 认证槽位，确保下次连接重新走 PIN 校验。
+    ble_srv_gatt_release_auth_slot(conn_handle);
     ble_srv_gatt_set_log_conn_handle(BLE_HS_CONN_HANDLE_NONE);
     ble_srv_gatt_set_log_notify_enabled(false);
     ble_srv_gatt_set_ota_status_notify_enabled(false);
@@ -220,7 +229,13 @@ void ble_srv_core_handle_subscribe(uint16_t attr_handle, uint16_t conn_handle,
 void ble_srv_core_handle_mtu(uint16_t conn_handle, uint16_t mtu)
 {
     (void)conn_handle;
-    (void)mtu;
+    s_active_mtu = mtu;
+    BLE_SRV_LOGI(TAG, "Active MTU updated: %u", (unsigned)mtu);
+}
+
+uint16_t ble_srv_core_get_mtu(void)
+{
+    return s_active_mtu;
 }
 
 static void ble_srv_on_sync(void)
@@ -307,11 +322,21 @@ bool ble_srv_init(void)
     ble_svc_gap_init();
     ble_svc_gatt_init();
 
-    int rc = ble_svc_gap_device_name_set(s_device_name);
+    // 提升本地 preferred MTU 至 512。NimBLE 中 MTU exchange 由对端发起，
+    // 设置该值后客户端 exchange 时可争取到 512 字节 ATT payload，
+    // 保证日志文件列表等大数据 GATT 传输不被截断。
+    int rc = ble_att_set_preferred_mtu(BLE_SRV_PREFERRED_MTU);
+    if (rc != 0) {
+        BLE_SRV_LOGW(TAG, "ble_att_set_preferred_mtu(%d) failed: rc=%d",
+                     BLE_SRV_PREFERRED_MTU, rc);
+    } else {
+        BLE_SRV_LOGI(TAG, "Preferred MTU set to %d", BLE_SRV_PREFERRED_MTU);
+    }
+
+    rc = ble_svc_gap_device_name_set(s_device_name);
     if (rc != 0) {
         BLE_SRV_LOGW(TAG, "ble_svc_gap_device_name_set failed: rc=%d", rc);
     }
-
     const struct ble_gatt_svc_def *svcs = ble_srv_get_gatt_svcs();
     rc = ble_gatts_count_cfg(svcs);
     if (rc != 0) {

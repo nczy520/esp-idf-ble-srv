@@ -125,7 +125,7 @@ from client_gui.gui_handlers import GuiHandlers
 class BleDeviceManager:
     """BLE设备管理器主应用"""
 
-    def __init__(self, version="2.1.0"):
+    def __init__(self, version="2.1.1"):
         self.event_loop = asyncio.new_event_loop()
         self.ble = BleCore()
         self.devices = []
@@ -264,6 +264,11 @@ class BleDeviceManager:
         self.ui = GuiComponents(self)
         self.ui.build_ui(page)
         self.handlers.set_ui(self.ui)
+
+        # macOS: 挂载 OTA Tab 的 FilePicker 到 page.overlay。
+        # 必须在 build_ui 之后、用户点击选择文件前完成。
+        if hasattr(self.ui, "ota_tab") and hasattr(self.ui.ota_tab, "_mount_picker"):
+            self.ui.ota_tab._mount_picker()
         
         # 设置BLE日志回调
         def ble_log_callback(msg, direction="info"):
@@ -307,7 +312,7 @@ class BleDeviceManager:
         ft.run(self.main)
 
 
-def main(version="2.1.0"):
+def main(version="2.1.1"):
     app = BleDeviceManager(version)
     app.run()
 

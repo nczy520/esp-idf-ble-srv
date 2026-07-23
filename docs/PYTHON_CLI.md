@@ -1,4 +1,4 @@
-# Python CLI 客户端使用说明 v2.1.0
+# Python CLI 客户端使用说明 v2.1.1
 
 ## 目录
 
@@ -20,7 +20,7 @@
 
 `tools/client.py` 是 ESP32 BLE 设备管理器的命令行客户端，用于通过蓝牙低功耗（BLE）与运行 ble_srv 固件的 ESP32 设备进行通信。支持设备信息查询、固件 OTA 升级、WiFi 配网、LED 控制等功能。
 
-**版本**: 2.1.0
+**版本**: 2.1.1
 
 ---
 
@@ -29,7 +29,7 @@
 - **操作系统**: Windows 10/11、macOS 10.15+、Linux（需 BlueZ）
 - **Python**: 3.8 或更高版本
 - **蓝牙**: 支持 BLE（蓝牙 4.0+）的适配器
-- **固件**: 设备端需烧录 ble_srv v2.1.0 或兼容版本固件
+- **固件**: 设备端需烧录 ble_srv v2.1.1 或兼容版本固件
 
 ---
 
@@ -47,7 +47,7 @@ python tools/client.py --version
 
 正常输出：
 ```
-client.py 2.1.0
+client.py 2.1.1
 ```
 
 ---

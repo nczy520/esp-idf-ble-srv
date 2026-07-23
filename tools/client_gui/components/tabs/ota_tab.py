@@ -36,6 +36,18 @@ class OTATabComponent(BaseTabComponent):
             "content_padding": ft.padding.Padding(12, 8, 12, 8),
         }
 
+        # 文件选择器：macOS 使用 Flet FilePicker（避免 _tkinter 缺失与 osascript 权限问题），
+        # Windows/Linux 使用 tkinter filedialog 走原生对话框。
+        # Flet FilePicker 通过 page.overlay.append 挂载，on_result 回调带回 path。
+        import sys
+        is_macos = sys.platform == "darwin"
+        if is_macos:
+            self.file_picker = ft.FilePicker(on_result=self._on_file_picked)
+            # FilePicker 必须挂到 page.overlay，构建时延迟挂载。
+            self._pending_picker = self.file_picker
+        else:
+            self._pending_picker = None
+
         self.fw_path_field = ft.TextField(
             label="固件文件路径",
             suffix=ft.IconButton(ft.Icons.FOLDER_OPEN, on_click=self._on_pick_firmware, icon_size=20),
@@ -126,24 +138,37 @@ class OTATabComponent(BaseTabComponent):
         ], expand=True)
 
     def _on_pick_firmware(self, event):
-        """选择固件文件回调"""
+        """选择固件文件回调
+        macOS: Flet FilePicker（原生 macOS 面板，无 osascript 权限问题）
+        Windows/Linux: tkinter.filedialog 弹原生对话框
+        """
         import sys
-        import subprocess
 
         if sys.platform == "darwin":
-            script = '''
-                set chosenFile to choose file with prompt "选择固件文件" of type {"bin"}
-                return POSIX path of chosenFile
-            '''
+            # FilePicker 需先挂到 page.overlay 才能 pick_files。
+            # 该挂载由 app 在 build 后统一调用 mount_picker 完成。
+            if self.file_picker is None:
+                return
             try:
-                result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
-                file_path = result.stdout.strip()
-                if file_path:
-                    self.fw_path_field.value = file_path
-                    self.app.page.update()
-            except Exception:
-                pass
+                self.file_picker.pick_files(
+                    dialog_title="选择固件文件",
+                    allowed_extensions=["bin"],
+                    allow_multiple=False,
+                )
+            except Exception as e:
+                # 首次 pick_files 之前 page.overlay 未挂载时 fallback 到延迟挂载。
+                self._pending_picker = self.file_picker
+                if hasattr(self.app, "page") and self.app.page is not None:
+                    self._mount_picker()
+                    self.file_picker.pick_files(
+                        dialog_title="选择固件文件",
+                        allowed_extensions=["bin"],
+                        allow_multiple=False,
+                    )
+                else:
+                    print(f"FilePicker 不可用: {e}")
         else:
+            # Windows/Linux: 使用 tkinter.filedialog
             try:
                 import tkinter as tk
                 from tkinter import filedialog
@@ -160,3 +185,32 @@ class OTATabComponent(BaseTabComponent):
                     self.app.page.update()
             except Exception:
                 pass
+
+    def _on_file_picked(self, e: ft.FilePickerResultEvent):
+        """Flet FilePicker 选择完成回调（仅 macOS 使用）"""
+        if not e.files or len(e.files) == 0:
+            return
+        # macOS FilePicker 返回的对象可能用 .path 或 .name，按 .path 优先。
+        picked = e.files[0]
+        path = getattr(picked, "path", None) or getattr(picked, "name", None)
+        if path and self.fw_path_field is not None:
+            self.fw_path_field.value = path
+            try:
+                self.app.page.update()
+            except Exception:
+                pass
+
+    def _mount_picker(self):
+        """将 FilePicker 挂到 page.overlay。app 在初始化阶段统一调用。"""
+        if self._pending_picker is None:
+            return
+        page = getattr(self.app, "page", None)
+        if page is None:
+            return
+        if self._pending_picker not in page.overlay:
+            page.overlay.append(self._pending_picker)
+            try:
+                page.update()
+            except Exception:
+                pass
+        self._pending_picker = None

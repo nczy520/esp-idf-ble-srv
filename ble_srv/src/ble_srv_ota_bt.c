@@ -447,6 +447,11 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     }
 
     if (offset < s_total_received) {
+        // 重复或乱序旧包：去重并丢弃。
+        // 进一步可校验 offset + payload_len 是否仍在窗口内，避免重叠包污染。
+        // 当前协议为严格顺序推进，重复包直接忽略即可。
+        BLE_SRV_LOGD(TAG, "Duplicate/old packet ignored: got=%lu exp=%lu",
+                     (unsigned long)offset, (unsigned long)s_total_received);
         return true;
     }
 

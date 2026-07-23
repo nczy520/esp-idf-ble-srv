@@ -3,12 +3,12 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Version](https://img.shields.io/badge/version-2.1.0-blueviolet)](ble_srv/idf_component.yml)
+[![Version](https://img.shields.io/badge/version-2.1.1-blueviolet)](ble_srv/idf_component.yml)
 
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 2.1.0 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 2.1.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
@@ -41,10 +41,10 @@ dependencies:
   ble_srv:
     git: https://github.com/your-org/esp-idf-ble-srv.git
     path: ble_srv
-    version: v2.1.0   # 可选：指定 tag、分支或 commit hash
+    version: v2.1.1   # 可选：指定 tag、分支或 commit hash
 ```
 
-> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v2.1.0`）以保证版本可追溯。
+> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v2.1.1`）以保证版本可追溯。
 
 配置完成后执行：
 
@@ -57,7 +57,7 @@ ESP-IDF 组件管理器会自动从 GitHub 克隆并引入 `ble_srv` 组件。
 #### 方式二：通过 ESP-IDF 组件管理器引入
 
 ```bash
-idf.py add-dependency "ble_srv^2.1.0"
+idf.py add-dependency "ble_srv^2.1.1"
 ```
 
 该命令会自动将依赖添加到 `idf_component.yml` 中，并从 ESP-IDF 组件仓库下载。
@@ -267,8 +267,8 @@ docs/
   PYTHON_CLI.md            # CLI客户端详细使用说明
   PYTHON_GUI.md            # GUI客户端详细使用说明
 tools/
-  client.py                # Python BLE 命令行客户端 v2.1.0
-  client_gui.py            # Python BLE GUI 客户端入口 v2.1.0
+  client.py                # Python BLE 命令行客户端 v2.1.1
+  client_gui.py            # Python BLE GUI 客户端入口 v2.1.1
   client/                  # CLI客户端核心模块
   client_gui/              # GUI客户端模块
 examples/
@@ -311,7 +311,7 @@ examples/
 
 ## 变更记录
 
-### v2.1.0 (2026-07-22)
+### v2.1.1 (2026-07-23)
 
 **设备端**:
 - **锁机制重构**: 将原有 5 种分散锁（GATT_LOCK/BT_LOCK/OTA_LOCK/LED_LOCK 等）统一为单一全局递归互斥锁 `ble_srv_lock`，通过 `BLE_SRV_LOCK()/BLE_SRV_UNLOCK()` 宏使用，移除约 100 行锁管理代码
@@ -333,9 +333,9 @@ examples/
 - 新增 `log_set_level` 方法
 
 **版本号同步**:
-- `ble_srv/idf_component.yml`: 2.0.1 → 2.1.0
-- `examples/basic/CMakeLists.txt`: 2.0.1 → 2.1.0
-- `tools/client.py` / `tools/client_gui.py`: 2.0.1 → 2.1.0
+- `ble_srv/idf_component.yml`: 2.1.0 → 2.1.1
+- `examples/basic/CMakeLists.txt`: 2.1.0 → 2.1.1
+- `tools/client.py` / `tools/client_gui.py`: 2.1.0 → 2.1.1
 - 文档版本号同步更新
 
 ### v2.0.1 (2026-07-19)

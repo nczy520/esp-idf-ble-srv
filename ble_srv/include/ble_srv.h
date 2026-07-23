@@ -28,6 +28,10 @@ void ble_srv_restart_device(void);
 void ble_srv_schedule_restart(uint32_t delay_ms);
 uint16_t ble_srv_get_conn_handle(void);
 
+// 本地 preferred MTU。NimBLE 中 MTU exchange 由对端发起，
+// 设备设置该值后客户端 exchange 时可争取到 512 字节 ATT payload。
+#define BLE_SRV_PREFERRED_MTU       512
+
 #ifdef __cplusplus
 }
 #endif

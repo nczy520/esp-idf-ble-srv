@@ -476,6 +476,13 @@ class BleCore:
             await self.ble_client.connect()
             self._is_connected = True
             self.connected_time = time.time()
+            # 主动请求 MTU=512，与设备 BLE_SRV_PREFERRED_MTU 对齐。
+            # 失败/不支持时回退到 bleak 报告的 mtu_size。
+            try:
+                if hasattr(self.ble_client, "set_mtu"):
+                    await self.ble_client.set_mtu(512)
+            except Exception as e:
+                self._log(f"set_mtu 失败，使用默认 MTU: {e}", "warn")
             mtu = self.ble_client.mtu_size if hasattr(self.ble_client, "mtu_size") else 247
             self._log(f"连接成功: {name} (MTU={mtu})", "success")
             if pin:
@@ -504,28 +511,44 @@ class BleCore:
             return False, str(e)
 
     async def _authenticate(self, pin):
-        """通过写入PIN码进行GATT层认证"""
+        """通过写入 PIN 码并订阅 auth 特征 notify 等待结果。
+        设备在写回调中比较 PIN 后主动 notify 0x01(成功) / 0x00(失败)，
+        取代旧版"写后立即读"竞态方案。
+        """
         if not self.ble_client or not self.ble_client.is_connected:
             return False
         try:
             self._log("正在PIN认证...", "tx")
             pin_bytes = pin.encode('utf-8')[:16]
-            await self.ble_client.write_gatt_char(BLE_DM_AUTH_CHAR_UUID, pin_bytes, response=True)
-            data = await self.ble_client.read_gatt_char(BLE_DM_AUTH_CHAR_UUID)
-            if data and data[0] == 1:
-                self._log("PIN认证成功", "success")
-                return True
-            else:
-                self._log("PIN认证失败: 设备返回未认证状态", "error")
-                return False
-        except BleakError as e:
-            if "not found" in str(e).lower() or "was not found" in str(e).lower():
-                self._log("设备不支持PIN认证，跳过认证", "warn")
-                return True
-            self._log(f"PIN认证失败: {e}", "error")
-            return False
+            auth_result = asyncio.Event()
+            auth_code = {'value': None}
+
+            def on_auth_notify(sender, data):
+                if data and len(data) >= 1:
+                    auth_code['value'] = data[0]
+                    auth_result.set()
+
+            await self.ble_client.start_notify(BLE_DM_AUTH_CHAR_UUID, on_auth_notify)
+            try:
+                await self.ble_client.write_gatt_char(BLE_DM_AUTH_CHAR_UUID, pin_bytes, response=True)
+                try:
+                    await asyncio.wait_for(auth_result.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    self._log("PIN认证超时：未收到设备通知", "error")
+                    return False
+                if auth_code['value'] == 1:
+                    self._log("PIN认证成功", "success")
+                    return True
+                else:
+                    self._log("PIN认证失败: 设备返回 0x00", "error")
+                    return False
+            finally:
+                try:
+                    await self.ble_client.stop_notify(BLE_DM_AUTH_CHAR_UUID)
+                except Exception:
+                    pass
         except Exception as e:
-            self._log(f"PIN认证失败: {e}", "error")
+            self._log(f"PIN认证异常: {e}", "error")
             return False
 
     def _on_log_notify(self, sender, data: bytearray):
