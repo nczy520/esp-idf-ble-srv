@@ -77,16 +77,94 @@ ESP32 BLE Device Manager CLI - 命令行工具 v2.1.1
   python tools/client.py -d BLE-SRV led-effect --effect breath --speed 80
 """
 
-__version__ = "2.1.1"
+__version__ = "2.2.1"
 
 import asyncio
 import argparse
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from client import BLEDeviceClient
+from client import BleCore
+
+
+# LED 特效英文名→编码映射（CLI 参数用）
+CLI_EFFECT_MAP = {'none': 0, 'breath': 1, 'blink': 2, 'rainbow': 3, 'strobe': 4}
+
+_LOG_PREFIX = {
+    "tx": "→",
+    "rx": "←",
+    "warn": "!",
+    "error": "✗",
+    "success": "✓",
+    "info": " ",
+    "debug": "·",
+}
+
+
+def cli_log(msg, direction="info"):
+    prefix = _LOG_PREFIX.get(direction, " ")
+    print(f"  [{prefix}] {msg}")
+
+
+def print_progress(written, total, _, start_time):
+    pct = min(100, int(written * 100 / total)) if total > 0 else 0
+    bar_len = 30
+    filled = int(bar_len * pct / 100)
+    if pct >= 100:
+        bar = '=' * bar_len
+    else:
+        bar = '=' * filled + '>' + ' ' * (bar_len - filled - 1)
+    w_str = f"{written/1024:.1f}KB" if written >= 1024 else f"{written}B"
+    t_str = f"{total/1024:.1f}KB" if total >= 1024 else f"{total}B"
+    elapsed = time.time() - start_time
+    if elapsed > 0 and written > 0:
+        speed = written / elapsed
+        s_str = f"{speed/1024:.1f}KB/s" if speed >= 1024 else f"{speed:.0f}B/s"
+        remain = total - written
+        eta = remain / speed if speed > 0 else 0
+        if eta >= 60:
+            eta_str = f"{int(eta//60)}m{int(eta%60)}s"
+        elif eta >= 1:
+            eta_str = f"{int(eta)}s"
+        else:
+            eta_str = "--"
+    else:
+        s_str = "0B/s"
+        eta_str = "--"
+    line = f"\r  [{bar}] {pct:3d}% {s_str:>9s} ETA:{eta_str:>5s} | {w_str}/{t_str}"
+    print(line.ljust(100), end='', flush=True)
+
+
+async def select_device(ble, devices, allow_select=True):
+    """从扫描结果中选择设备"""
+    if not devices:
+        print("未发现匹配的 BLE 设备")
+        return None
+    print(f"\n发现 {len(devices)} 个匹配设备:")
+    for i, d in enumerate(devices):
+        rssi = d.get("rssi")
+        rssi_str = f"  RSSI: {rssi} dBm" if rssi is not None else ""
+        print(f"  {i+1}. {d['name']} ({d['address']}){rssi_str}")
+    if not allow_select or len(devices) == 1:
+        print(f"\n自动选择: {devices[0]['name']} ({devices[0]['address']})")
+        return devices[0]
+    while True:
+        try:
+            choice = input(f"\n请选择设备 [1-{len(devices)}] (q 退出): ").strip()
+            if choice.lower() == 'q':
+                return None
+            idx = int(choice) - 1
+            if 0 <= idx < len(devices):
+                return devices[idx]
+            print(f"无效选择，请输入 1-{len(devices)}")
+        except ValueError:
+            print("无效输入，请输入数字或 q")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
 
 
 async def main():
@@ -138,7 +216,8 @@ async def main():
 
     args = parser.parse_args()
 
-    client = BLEDeviceClient(device_name=args.device, pin=args.pin)
+    ble = BleCore()
+    ble.set_log_callback(cli_log)
     connected = False
 
     if args.command == 'wifi-connect' and not args.ssid:
@@ -160,43 +239,56 @@ async def main():
 
     try:
         if args.command == 'scan':
-            await client.scan(timeout=args.timeout)
+            devices = await ble.scan_devices(timeout=args.timeout, name_filter=args.device)
+            if devices:
+                for i, d in enumerate(devices):
+                    rssi = d.get("rssi")
+                    rssi_str = f"  RSSI: {rssi} dBm" if rssi is not None else ""
+                    print(f"  {i+1}. {d['name']} ({d['address']}){rssi_str}")
             return 0
 
-        connected = await client.connect()
-        if not connected:
+        # 需要连接设备的命令
+        devices = await ble.scan_devices(timeout=args.timeout, name_filter=args.device)
+        device = await select_device(ble, devices, allow_select=True)
+        if device is None:
             return 1
 
+        ok, info = await ble.connect_device(device, pin=args.pin)
+        if not ok:
+            print(f"连接失败: {info}")
+            return 1
+        connected = True
+
         if args.command == 'info':
-            info = await client.read_device_info()
+            info = await ble.read_device_info()
             if info:
                 print(f"\n设备信息:\n{info}")
             else:
                 return 1
 
         elif args.command == 'memory':
-            info = await client.read_memory_info()
+            info = await ble.read_memory_info()
             if info:
                 print(f"\n内存信息:\n{info}")
             else:
                 return 1
 
         elif args.command == 'cpu':
-            info = await client.read_cpu_info()
+            info = await ble.read_cpu_info()
             if info:
                 print(f"\nCPU信息:\n{info}")
             else:
                 return 1
 
         elif args.command == 'flash':
-            info = await client.read_flash_info()
+            info = await ble.read_flash_info()
             if info:
                 print(f"\nFlash信息:\n{info}")
             else:
                 return 1
 
         elif args.command == 'partition':
-            partitions = await client.read_all_partitions()
+            partitions = await ble.read_all_partitions()
             if partitions:
                 print(f"\n分区列表 ({len(partitions)} 个):")
                 for i, part in enumerate(partitions):
@@ -207,62 +299,80 @@ async def main():
                 return 1
 
         elif args.command == 'restart':
-            await client.restart_device()
+            await ble.restart_device()
 
         elif args.command == 'ota-bt':
-            ok = await client.ota_update(args.firmware)
+            ok, msg = await ble.ota_update(args.firmware, progress_cb=print_progress)
+            print()
             if ok:
                 print("\nOTA升级成功！建议重启设备以应用新固件。")
                 return 0
             else:
-                print("\nOTA升级失败。请重启设备后再次尝试OTA。", file=sys.stderr)
+                print(f"\nOTA升级失败: {msg}", file=sys.stderr)
+                print("请重启设备后再次尝试OTA。", file=sys.stderr)
                 return 1
 
         elif args.command == 'ota-url':
-            ok = await client.ota_url_start_url(args.url)
+            ok, msg = await ble.ota_url_start(args.url)
             if ok:
                 print("\nURL OTA完成！建议重启设备以应用新固件。")
                 return 0
             else:
-                print("\nURL OTA失败。请检查WiFi连接和URL地址，重启设备后再次尝试。", file=sys.stderr)
+                print(f"\nURL OTA失败: {msg}", file=sys.stderr)
+                print("请检查WiFi连接和URL地址，重启设备后再次尝试。", file=sys.stderr)
                 return 1
 
         elif args.command == 'wifi-status':
-            status = await client.wifi_status()
+            status = await ble.wifi_status()
             if status:
                 print(f"\nWiFi状态:\n{status}")
             else:
                 return 1
 
         elif args.command == 'wifi-connect':
-            await client.wifi_connect(args.ssid, args.password)
+            await ble.wifi_connect(args.ssid, args.password)
 
         elif args.command == 'wifi-disconnect':
-            await client.wifi_disconnect()
+            await ble.wifi_disconnect()
 
         elif args.command == 'wifi-forget':
-            await client.wifi_forget()
+            await ble.wifi_forget()
 
         elif args.command == 'ntp-sync':
-            await client.wifi_ntp_sync()
+            await ble.wifi_ntp_sync()
 
         elif args.command == 'led-on':
-            await client.led_on()
+            await ble.led_on()
 
         elif args.command == 'led-off':
-            await client.led_off()
+            await ble.led_off()
 
         elif args.command == 'led-color':
-            ok = await client.led_set_color(args.color)
-            if not ok:
+            color_hex = args.color.strip('#').strip()
+            if len(color_hex) != 6:
+                print("颜色格式错误，请使用AABBCC格式（如FF0000=红色）")
+                return 1
+            try:
+                r = int(color_hex[0:2], 16)
+                g = int(color_hex[2:4], 16)
+                b = int(color_hex[4:6], 16)
+            except ValueError:
+                print("颜色格式错误，请使用AABBCC格式（如FF0000=红色）")
+                return 1
+            if not await ble.led_set_color(r, g, b):
                 return 1
 
         elif args.command == 'led-status':
-            await client.led_status()
+            state = await ble.led_status()
+            if state is not None:
+                print(f"LED状态: {'开' if state == 1 else '关'}")
+            else:
+                return 1
 
         elif args.command == 'led-effect':
-            effect_map = {'none': 0, 'breath': 1, 'blink': 2, 'rainbow': 3, 'strobe': 4}
-            await client.led_set_effect(effect_map[args.effect], args.speed)
+            effect_code = CLI_EFFECT_MAP[args.effect]
+            if not await ble.led_set_effect(effect_code, args.speed):
+                return 1
 
         return 0
 
@@ -270,12 +380,12 @@ async def main():
         print("\n\n用户中止")
         if connected and args.command == 'ota-bt':
             print("正在中止OTA...")
-            await client.ota_abort()
+            await ble.ota_abort()
         return 130
     finally:
         try:
             if connected:
-                await client.disconnect()
+                await ble.disconnect_device()
         except Exception as e:
             print(f"Disconnect error: {e}")
 

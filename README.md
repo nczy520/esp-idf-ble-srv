@@ -3,7 +3,7 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Target](https://img.shields.io/badge/target-ESP32--S2%2FS3%2FC5%2FC6%2FH2-orange)](https://www.espressif.com/en/products/socs/esp32-s3)
-[![Version](https://img.shields.io/badge/version-2.1.1-blueviolet)](ble_srv/idf_component.yml)
+[![Version](https://img.shields.io/badge/version-2.2.1-blueviolet)](ble_srv/idf_component.yml)
 
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
@@ -41,10 +41,10 @@ dependencies:
   ble_srv:
     git: https://github.com/your-org/esp-idf-ble-srv.git
     path: ble_srv
-    version: v2.1.1   # 可选：指定 tag、分支或 commit hash
+    version: v2.2.1   # 可选：指定 tag、分支或 commit hash
 ```
 
-> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v2.1.1`）以保证版本可追溯。
+> `version` 字段可省略，省略时默认拉取仓库默认分支的最新代码。建议指定具体 tag（如 `v2.2.1`）以保证版本可追溯。
 
 配置完成后执行：
 

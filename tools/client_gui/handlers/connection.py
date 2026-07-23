@@ -37,7 +37,7 @@ class ConnectionHandler(BaseHandler):
             while self.ble.connected and self.ble.connected_time is not None:
                 self.ui.status_text.value = self._format_conn_status_text()
                 try:
-                    self.page.update(self.ui.status_text)
+                    self.safe_update()
                 except Exception:
                     break
                 await asyncio.sleep(1)

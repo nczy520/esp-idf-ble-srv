@@ -34,7 +34,7 @@ except ImportError:
     import sys
     sys.exit(1)
 
-from client.constants import (
+from .constants import (
     BLE_DM_INFO_CHAR_UUID,
     BLE_DM_MEMORY_CHAR_UUID,
     BLE_DM_CPU_CHAR_UUID,
@@ -77,7 +77,7 @@ from client.constants import (
     BLE_LOG_HTTP_CMD_SET_LEVEL,
     parse_esp_fw_version,
 )
-from client.models import (
+from .models import (
     DeviceInfo,
     MemoryInfo,
     CPUInfo,
@@ -88,6 +88,8 @@ from client.models import (
     OTAError,
     WiFiStatus,
     LogStorageInfo,
+    get_ota_state_name,
+    get_ota_error_name,
 )
 
 
@@ -165,24 +167,18 @@ EFFECT_MAP = {
     "彩虹瀑布": 69,
 }
 
-OTA_ERROR_NAMES = {
-    0: "无错误",
-    1: "无效命令",
-    2: "固件大小无效",
-    3: "Flash写入失败",
-    4: "无可用OTA分区",
-    5: "固件校验失败",
-    6: "设备内部错误",
-    7: "设备忙",
-    8: "网络未连接",
-    9: "用户中止",
-    10: "连接断开",
-    11: "远程固件版本更旧",
-    12: "固件版本相同",
-    13: "固件CRC校验失败",
-}
-
 _UI_FLUSH_INTERVAL = 0.05
+
+_DISCONNECT_ERROR_KEYWORDS = [
+    "disconnect", "disconnected", "unreachable", "reset",
+    "not found", "abort", "cancelled", "取消",
+]
+
+
+def is_disconnect_error(msg):
+    """判断错误信息是否表示连接已断开"""
+    msg_lower = str(msg).lower()
+    return any(k in msg_lower for k in _DISCONNECT_ERROR_KEYWORDS)
 
 
 class BleCore:
@@ -510,9 +506,13 @@ class BleCore:
         try:
             await scanner.start()
             await asyncio.sleep(timeout)
-            await scanner.stop()
         except Exception as e:
             self._log(f"扫描异常: {e}", "error")
+        finally:
+            try:
+                await scanner.stop()
+            except Exception:
+                pass
 
         self._log(f"扫描完成，发现 {len(devices)} 个设备", "info")
         return devices
@@ -791,7 +791,7 @@ class BleCore:
             if "not found" in msg:
                 self._log(f"特征不存在 [{uuid}]", "warn")
                 return False
-            if ignore_disconnect and any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset", "abort"]):
+            if ignore_disconnect and is_disconnect_error(msg):
                 self._log("写入完成（设备已断开）", "warn")
                 self._is_connected = False
                 if self._disconnect_callback:
@@ -1032,7 +1032,7 @@ class BleCore:
             return True
         except (BleakError, OSError) as e:
             msg = str(e).lower()
-            if any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset", "not found", "abort", "取消", "cancelled"]):
+            if is_disconnect_error(msg):
                 self._log("OTA应用完成，设备正在重启", "success")
                 return True
             self._log(f"OTA应用失败: {e}", "error")
@@ -1094,7 +1094,7 @@ class BleCore:
         if not os.path.exists(fw_path):
             return False, "固件文件不存在"
         # 读取整个固件并计算 CRC 是阻塞操作，放到线程池执行，避免卡住事件循环
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fw_data = await loop.run_in_executor(None, self._read_fw_file, fw_path)
         fw_size = len(fw_data)
         fw_crc = await loop.run_in_executor(None, lambda: zlib.crc32(fw_data) & 0xFFFFFFFF)
@@ -1122,7 +1122,7 @@ class BleCore:
                 if not self._ota_active:
                     self._reset_ota_state()
                     if self.ota_status and self.ota_status.state in (OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL, OTAState.APPLY_FAIL, OTAState.CHECK_FAIL):
-                        err_name = OTA_ERROR_NAMES.get(self.ota_status.error_code, f"错误码{self.ota_status.error_code}")
+                        err_name = get_ota_error_name(self.ota_status.error_code)
                         return False, f"OTA失败: {err_name}"
                     return False, "OTA已中止"
 
@@ -1134,7 +1134,7 @@ class BleCore:
                         OTAState.ERROR, OTAState.ABORTED, OTAState.VERIFY_FAIL,
                         OTAState.APPLY_FAIL, OTAState.CHECK_FAIL):
                     self._reset_ota_state()
-                    err_name = OTA_ERROR_NAMES.get(self.ota_status.error_code, f"错误码{self.ota_status.error_code}")
+                    err_name = get_ota_error_name(self.ota_status.error_code)
                     return False, f"OTA失败: {err_name}"
 
                 window_end = min(acked_offset + window_bytes, fw_size)
@@ -1215,7 +1215,7 @@ class BleCore:
             return True, "OTA升级成功"
         except (BleakError, OSError) as e:
             msg = str(e).lower()
-            if any(k in msg for k in ["disconnect", "disconnected", "unreachable", "reset", "not found", "abort"]):
+            if is_disconnect_error(msg):
                 ota_ok = (self.ota_status and self.ota_status.state
                           in (OTAState.APPLY_OK, OTAState.APPLYING, OTAState.VERIFY_OK))
                 self._reset_ota_state()
@@ -1247,23 +1247,7 @@ class BleCore:
             should_log_progress = False
 
             if state_changed:
-                state_names = {
-                    OTAState.IDLE: "空闲",
-                    OTAState.CHECKING: "检查固件",
-                    OTAState.CHECK_OK: "检查通过",
-                    OTAState.CHECK_FAIL: "无需更新",
-                    OTAState.RECEIVING: "接收固件中",
-                    OTAState.VERIFYING: "校验中",
-                    OTAState.VERIFY_OK: "校验通过",
-                    OTAState.VERIFY_FAIL: "校验失败",
-                    OTAState.APPLYING: "应用中",
-                    OTAState.APPLY_OK: "应用成功",
-                    OTAState.APPLY_FAIL: "应用失败",
-                    OTAState.ABORTING: "正在中止",
-                    OTAState.ABORTED: "已中止",
-                    OTAState.ERROR: "错误",
-                }
-                name = state_names.get(status.state, f"状态{status.state}")
+                name = get_ota_state_name(status.state)
                 if is_bt_ota:
                     prefix = "BT OTA"
                     self._log(f"{prefix}状态: {name}", "rx" if status.state not in (OTAState.ERROR, OTAState.VERIFY_FAIL, OTAState.APPLY_FAIL, OTAState.ABORTED) else "warn")
@@ -1299,6 +1283,11 @@ class BleCore:
                         if self._ota_page:
                             cb = self._ota_progress_callback
                             self._queue_ui("progress", (cb, written, self._ota_fw_size, self._ota_start_time))
+                        else:
+                            try:
+                                self._ota_progress_callback(written, self._ota_fw_size, written, self._ota_start_time)
+                            except Exception:
+                                pass
 
             if is_url_ota and self._ota_url_status_callback:
                 url_cb = self._ota_url_status_callback

@@ -183,7 +183,7 @@ class OTATabComponent(BaseTabComponent):
                 root.destroy()
                 if file_path:
                     self.fw_path_field.value = file_path
-                    self.app.page.update()
+                    self.app.safe_update()
             except Exception:
                 pass
 
@@ -197,7 +197,7 @@ class OTATabComponent(BaseTabComponent):
         if path and self.fw_path_field is not None:
             self.fw_path_field.value = path
             try:
-                self.app.page.update()
+                self.app.safe_update()
             except Exception:
                 pass
 
@@ -211,7 +211,7 @@ class OTATabComponent(BaseTabComponent):
         if self._pending_picker not in page.overlay:
             page.overlay.append(self._pending_picker)
             try:
-                page.update()
+                self.app.safe_update()
             except Exception:
                 pass
         self._pending_picker = None

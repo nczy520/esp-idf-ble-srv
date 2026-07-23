@@ -5,14 +5,11 @@ GUI事件处理基础模块
 
 import time
 import asyncio
-import threading
 
 import flet as ft
 
 
 class BaseHandler:
-    _update_lock = threading.Lock()
-
     def __init__(self, app):
         self.app = app
         self.ble = app.ble
@@ -21,8 +18,8 @@ class BaseHandler:
         self._loading_count = 0
 
     def safe_update(self):
-        with BaseHandler._update_lock:
-            self.page.update()
+        """线程安全的页面更新，统一使用app级别的锁"""
+        self.app.safe_update()
 
     def set_ui(self, ui):
         self.ui = ui

@@ -132,6 +132,15 @@ static bool ble_srv_log_is_valid_log_file(const char *filename)
     return true;
 }
 
+static uint32_t ble_srv_log_parse_file_number(const char *filename)
+{
+    uint32_t num = 0;
+    for (int i = 0; i < 6; i++) {
+        num = num * 10 + (uint32_t)(filename[i] - '0');
+    }
+    return num;
+}
+
 static void ble_srv_log_cleanup_old_files(void)
 {
     const char *base_path = (s_storage == BLE_SRV_LOG_STORAGE_SD) ? BLE_SRV_LOG_SD_PATH : BLE_SRV_LOG_LITTLEFS_PATH;
@@ -146,20 +155,18 @@ static void ble_srv_log_cleanup_old_files(void)
         DIR *dir = opendir(log_dir);
         if (!dir) break;
 
-        char oldest_file[256] = {0};
-        time_t oldest_time = ~0ULL;
+        char oldest_file[384] = {0};
+        uint32_t oldest_num = 0;
+        bool found = false;
         struct dirent *entry;
 
         while ((entry = readdir(dir)) != NULL) {
             if (ble_srv_log_is_valid_log_file(entry->d_name)) {
-                char filepath[384];
-                snprintf(filepath, sizeof(filepath), "%s/%s", log_dir, entry->d_name);
-                struct stat st;
-                if (stat(filepath, &st) == 0) {
-                    if (st.st_mtime < oldest_time) {
-                        oldest_time = st.st_mtime;
-                        strncpy(oldest_file, filepath, sizeof(oldest_file) - 1);
-                    }
+                uint32_t num = ble_srv_log_parse_file_number(entry->d_name);
+                if (!found || num < oldest_num) {
+                    found = true;
+                    oldest_num = num;
+                    snprintf(oldest_file, sizeof(oldest_file), "%s/%s", log_dir, entry->d_name);
                 }
             }
         }
@@ -191,18 +198,16 @@ static void ble_srv_log_cleanup_old_files(void)
         dir = opendir(log_dir);
         if (!dir) break;
 
-        char oldest_file[256] = {0};
-        time_t oldest_time = ~0ULL;
+        char oldest_file[384] = {0};
+        uint32_t oldest_num = 0;
+        bool found = false;
         while ((entry = readdir(dir)) != NULL) {
             if (ble_srv_log_is_valid_log_file(entry->d_name)) {
-                char filepath[384];
-                snprintf(filepath, sizeof(filepath), "%s/%s", log_dir, entry->d_name);
-                struct stat st;
-                if (stat(filepath, &st) == 0) {
-                    if (st.st_mtime < oldest_time) {
-                        oldest_time = st.st_mtime;
-                        strncpy(oldest_file, filepath, sizeof(oldest_file) - 1);
-                    }
+                uint32_t num = ble_srv_log_parse_file_number(entry->d_name);
+                if (!found || num < oldest_num) {
+                    found = true;
+                    oldest_num = num;
+                    snprintf(oldest_file, sizeof(oldest_file), "%s/%s", log_dir, entry->d_name);
                 }
             }
         }
@@ -1096,10 +1101,10 @@ static esp_err_t log_http_index_handler(httpd_req_t *req)
         "<div class=\"file-list\">"
         "<div class=\"file-list-header\">"
         "<span>文件列表</span>"
-        "<span class=\"file-count\">共 %d 个</span>"
+        "<span class=\"file-count\">共 %d / %d 个</span>"
         "</div>",
         storage_name, total_str, used_str, free_str,
-        used_percent, used_percent, file_count, file_count);
+        used_percent, used_percent, file_count, file_count, BLE_SRV_LOG_MAX_FILES);
 
     if (file_count == 0) {
         int remaining = 16384 - len;
@@ -1297,6 +1302,18 @@ bool ble_srv_log_http_start(void)
     config.server_port = BLE_SRV_LOG_HTTP_PORT;
     config.max_uri_handlers = 8;
     config.uri_match_fn = httpd_uri_match_wildcard;
+
+    /* esp_http_server 内部占用 3 个 socket，要求
+     * max_open_sockets + 3 <= CONFIG_LWIP_MAX_SOCKETS。
+     * 根据 LWIP socket 预算收敛 max_open_sockets，避免在
+     * socket 数较少的工程上启动失败（ESP_ERR_INVALID_ARG）。 */
+    int max_client_sockets = CONFIG_LWIP_MAX_SOCKETS - 3;
+    if (max_client_sockets < 1) {
+        max_client_sockets = 1;
+    }
+    if ((int)config.max_open_sockets > max_client_sockets) {
+        config.max_open_sockets = max_client_sockets;
+    }
 
     esp_err_t ret = httpd_start(&s_http_server, &config);
     if (ret != ESP_OK) {

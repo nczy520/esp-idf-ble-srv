@@ -117,7 +117,7 @@ def center_window(window):
     window.left = (screen_width - window.width) // 2
     window.top = (screen_height - window.height) // 2
 
-from client_gui.ble_core import BleCore, EFFECT_MAP
+from client.ble_core import BleCore, EFFECT_MAP
 from client_gui.gui_components import GuiComponents
 from client_gui.gui_handlers import GuiHandlers
 
@@ -125,7 +125,9 @@ from client_gui.gui_handlers import GuiHandlers
 class BleDeviceManager:
     """BLE设备管理器主应用"""
 
-    def __init__(self, version="2.1.1"):
+    _update_lock = threading.Lock()
+
+    def __init__(self, version="2.2.1"):
         self.event_loop = asyncio.new_event_loop()
         self.ble = BleCore()
         self.devices = []
@@ -185,6 +187,15 @@ class BleDeviceManager:
         else:
             fn()
 
+    def safe_update(self, *controls):
+        """线程安全的页面更新，所有page.update()都应走此方法"""
+        with BleDeviceManager._update_lock:
+            if self.page:
+                if controls:
+                    self.page.update(*controls)
+                else:
+                    self.page.update()
+
     def show_snack(self, message):
         """显示Snack通知"""
         def _show():
@@ -205,7 +216,7 @@ class BleDeviceManager:
                     elif hasattr(overlay.content, 'value'):
                         overlay.content.value = message
                 overlay.visible = True
-                self.page.update()
+                self.safe_update()
             except Exception as e:
                 print(f"show_loading_overlay error: {e}")
         self.ui_call(_show)
@@ -215,7 +226,7 @@ class BleDeviceManager:
         def _hide():
             try:
                 overlay.visible = False
-                self.page.update()
+                self.safe_update()
             except Exception as e:
                 print(f"hide_loading_overlay error: {e}")
         self.ui_call(_hide)
@@ -312,7 +323,7 @@ class BleDeviceManager:
         ft.run(self.main)
 
 
-def main(version="2.1.1"):
+def main(version="2.2.1"):
     app = BleDeviceManager(version)
     app.run()
 

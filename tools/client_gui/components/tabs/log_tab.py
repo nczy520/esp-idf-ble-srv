@@ -147,7 +147,7 @@ class LogTabComponent(BaseTabComponent):
             level_map = {"1": "ERROR", "2": "WARN", "3": "INFO", "4": "DEBUG", "5": "VERBOSE"}
             self.level_label.value = level_map.get(self._level_value, "INFO")
             self.safe_call("log_control.log_set_level", e)
-            self.app.page.update()
+            self.app.safe_update()
 
         self.level_dropdown = ft.PopupMenuButton(
             content=ft.Container(

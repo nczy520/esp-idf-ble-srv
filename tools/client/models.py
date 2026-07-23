@@ -3,10 +3,12 @@ BLE设备数据结构模型
 """
 
 import struct
+from enum import IntEnum
 from datetime import timedelta, datetime
 from typing import Optional
 
-class OTAState:
+
+class OTAState(IntEnum):
     IDLE = 0x00
     CHECKING = 0x01
     CHECK_OK = 0x02
@@ -22,7 +24,8 @@ class OTAState:
     ABORTED = 0x0C
     ERROR = 0x0D
 
-class OTAError:
+
+class OTAError(IntEnum):
     NONE = 0x00
     INVALID_CMD = 0x01
     INVALID_SIZE = 0x02
@@ -37,6 +40,49 @@ class OTAError:
     VERSION_DOWNGRADE = 0x0B
     VERSION_SAME = 0x0C
     CRC_MISMATCH = 0x0D
+
+
+OTA_STATE_NAMES = {
+    OTAState.IDLE: "空闲",
+    OTAState.CHECKING: "检查固件",
+    OTAState.CHECK_OK: "检查通过",
+    OTAState.CHECK_FAIL: "无需更新",
+    OTAState.RECEIVING: "接收固件中",
+    OTAState.VERIFYING: "校验中",
+    OTAState.VERIFY_OK: "校验成功",
+    OTAState.VERIFY_FAIL: "校验失败",
+    OTAState.APPLYING: "应用中",
+    OTAState.APPLY_OK: "应用成功",
+    OTAState.APPLY_FAIL: "应用失败",
+    OTAState.ABORTING: "中止中",
+    OTAState.ABORTED: "已中止",
+    OTAState.ERROR: "错误",
+}
+
+OTA_ERROR_NAMES = {
+    OTAError.NONE: "无错误",
+    OTAError.INVALID_CMD: "无效命令",
+    OTAError.INVALID_SIZE: "固件大小无效",
+    OTAError.FLASH_WRITE: "Flash写入失败",
+    OTAError.NO_PARTITION: "无可用OTA分区",
+    OTAError.VERIFY_FAILED: "固件校验失败",
+    OTAError.INTERNAL: "设备内部错误",
+    OTAError.BUSY: "设备忙",
+    OTAError.NO_NETWORK: "网络未连接",
+    OTAError.ABORTED: "用户中止",
+    OTAError.DISCONNECTED: "连接断开",
+    OTAError.VERSION_DOWNGRADE: "远程固件版本更旧",
+    OTAError.VERSION_SAME: "固件版本相同",
+    OTAError.CRC_MISMATCH: "固件CRC校验失败",
+}
+
+
+def get_ota_state_name(state):
+    return OTA_STATE_NAMES.get(state, f"状态{state}")
+
+
+def get_ota_error_name(error_code):
+    return OTA_ERROR_NAMES.get(error_code, f"错误码{error_code}")
 
 class DeviceInfo:
 
@@ -242,39 +288,7 @@ class OTAStatus:
         self.progress: int = struct.unpack('<B', data[10:11])[0]
 
     def __str__(self) -> str:
-        state_names = {
-            OTAState.IDLE: "空闲",
-            OTAState.CHECKING: "检查版本中",
-            OTAState.CHECK_OK: "版本检查通过",
-            OTAState.CHECK_FAIL: "无需更新",
-            OTAState.RECEIVING: "接收中",
-            OTAState.VERIFYING: "校验中",
-            OTAState.VERIFY_OK: "校验成功",
-            OTAState.VERIFY_FAIL: "校验失败",
-            OTAState.APPLYING: "应用中",
-            OTAState.APPLY_OK: "应用成功",
-            OTAState.APPLY_FAIL: "应用失败",
-            OTAState.ABORTING: "中止中",
-            OTAState.ABORTED: "已中止",
-            OTAState.ERROR: "错误"
-        }
-        error_names = {
-            OTAError.NONE: "无错误",
-            OTAError.INVALID_CMD: "无效命令",
-            OTAError.INVALID_SIZE: "无效大小",
-            OTAError.FLASH_WRITE: "Flash写入错误",
-            OTAError.NO_PARTITION: "无可用分区",
-            OTAError.VERIFY_FAILED: "校验失败",
-            OTAError.INTERNAL: "内部错误",
-            OTAError.BUSY: "设备忙",
-            OTAError.NO_NETWORK: "网络未连接",
-            OTAError.ABORTED: "用户中止",
-            OTAError.DISCONNECTED: "连接断开",
-            OTAError.VERSION_DOWNGRADE: "远程版本更旧",
-            OTAError.VERSION_SAME: "版本相同",
-            OTAError.CRC_MISMATCH: "固件CRC校验失败"
-        }
-        return f"状态: {state_names.get(self.state, f'未知({self.state})')}\n错误: {error_names.get(self.error_code, f'未知({self.error_code})')}\n固件大小: {self.fw_size} bytes\n已写入: {self.bytes_written} bytes\n进度: {self.progress}%"
+        return f"状态: {get_ota_state_name(self.state)}\n错误: {get_ota_error_name(self.error_code)}\n固件大小: {self.fw_size} bytes\n已写入: {self.bytes_written} bytes\n进度: {self.progress}%"
 
 class WiFiStatus:
     def __init__(self, data: bytes) -> None:
