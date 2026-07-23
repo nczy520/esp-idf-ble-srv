@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ESP32 BLE Device Manager - Flet GUI Client v2.1.1
+ESP32 BLE Device Manager - Flet GUI Client v2.2.1
 跨平台蓝牙BLE设备管理器图形界面客户端 (macOS / Windows / Linux)
 
 开发者: 赵宇

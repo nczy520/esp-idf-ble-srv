@@ -1,4 +1,4 @@
-# ble_srv 模组使用说明 v2.1.1
+# ble_srv 模组使用说明 v2.2.1
 
 ## 目录
 
@@ -27,7 +27,7 @@
 
 `ble_srv` 是基于 ESP-IDF NimBLE 协议栈的 BLE（蓝牙低功耗）服务组件，为 ESP32 系列芯片提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。组件采用模块化设计，各功能可通过 menuconfig 独立开关。
 
-**版本**: 2.1.1
+**版本**: 2.2.1
 **协议栈**: NimBLE（ESP-IDF 内置）
 **兼容**: ESP-IDF v5.x / v6.x（推荐 v6.0+）
 
@@ -150,7 +150,7 @@ cp -r ble_srv your_project/components/
 或通过 ESP-IDF 组件管理器添加：
 
 ```bash
-idf.py add-dependency "ble_srv^2.1.1"
+idf.py add-dependency "ble_srv^2.2.1"
 ```
 
 ### 2. 配置项目
@@ -419,12 +419,22 @@ CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE=256
 
 **存储选择优先级**: SD 卡（启用时）> LittleFS。SD 卡挂载失败时自动回退到 LittleFS。
 
+**日志文件命名与滚动清理**:
+- 日志文件按 6 位序号命名（`%06lu.log`，如 `000123.log`），序号来自 NVS 单调递增计数器。
+- 每次滚动新建日志文件时触发清理，清理分两步：
+  1. 当可用空间低于 `BLE_SRV_LOG_MIN_FREE_SPACE` 时，循环删除最旧文件直至满足空间要求；
+  2. 当文件数量达到 `BLE_SRV_LOG_MAX_FILES` 时，循环删除最旧文件直至低于上限。
+- "最旧"按**文件名序号**判定（序号小者更旧），不依赖 `mtime`，因此无需设备具备可靠 RTC 时间。
+- 清理仅在滚动新建文件时执行；修改 `MAX_FILES` 后已有的超量文件会在后续滚动中逐步收敛，不会立即删除。
+
 **LittleFS 分区要求**:
 - 分区表需包含一个 `data, spiffs` 类型的分区（LittleFS 复用 spiffs 子类型，这是 joltwallet/littlefs 组件的标准要求）
 - 分区名建议为 `littlefs`，并确保 `BLE_SRV_LOG_LITTLEFS_PARTITION` 配置与分区名一致
 - LittleFS 支持真实目录层级，挂载时会自动创建日志目录
 
-**HTTP 服务器**: 启用后可通过浏览器访问 `http://<设备IP>:8080/` 浏览和下载日志文件。需要启用 `CONFIG_HTTPD_URI_MATCH_WILDCARD=y` 以支持通配符路由。
+**HTTP 服务器**: 启用后可通过浏览器访问 `http://<设备IP>:8080/` 浏览和下载日志文件。需要启用 `CONFIG_HTTPD_URI_MATCH_WILDCARD=y` 以支持通配符路由。Web 页面顶部显示存储容量使用情况，文件列表标题显示当前日志文件数与上限（`共 N / MAX 个`），便于确认是否超过 `BLE_SRV_LOG_MAX_FILES`。
+
+> **Socket 预算注意**: `esp_http_server` 内部固定占用 3 个 socket，要求 `max_open_sockets + 3 <= CONFIG_LWIP_MAX_SOCKETS`。组件会根据 `CONFIG_LWIP_MAX_SOCKETS` 自动收敛 `max_open_sockets`，但若该值过小（如默认工程的 4，仅剩 1 个可用），并发访问能力会受限。建议将 `CONFIG_LWIP_MAX_SOCKETS` 设为 10 或更高，以避免 HTTP 服务启动失败（`ESP_ERR_INVALID_ARG`）或连接数不足。
 
 **依赖组件**: 启用日志系统时，`ble_srv/CMakeLists.txt` 中已声明以下组件依赖（无需用户手动添加）：
 - `vfs` — 虚拟文件系统
@@ -599,6 +609,9 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # HTTPD 通配符路由（日志 HTTP 服务器需要）
 CONFIG_HTTPD_URI_MATCH_WILDCARD=y
 
+# LWIP socket 数（日志 HTTP 服务器需要 max_open_sockets + 3 <= 此值）
+CONFIG_LWIP_MAX_SOCKETS=10
+
 # HTTPS 证书包（URL OTA 需要）
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 ```
@@ -619,6 +632,8 @@ CONFIG_BLE_SRV_LOG_MAX_FILES=100
 CONFIG_BLE_SRV_LOG_MIN_FREE_SPACE=1024   # 至少保留 1MB 空闲
 CONFIG_BLE_SRV_LOG_MAX_FILE_SIZE=1024    # 单文件 1MB
 CONFIG_BLE_SRV_LOG_HTTP_PORT=8080
+CONFIG_HTTPD_URI_MATCH_WILDCARD=y
+CONFIG_LWIP_MAX_SOCKETS=10               # 日志 HTTP 服务器 socket 预算
 ```
 
 ### menuconfig 操作提示

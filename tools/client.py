@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ESP32 BLE Device Manager CLI - 命令行工具 v2.1.1
+ESP32 BLE Device Manager CLI - 命令行工具 v2.2.1
 
 使用方法:
   python tools/client.py scan [--timeout 5]

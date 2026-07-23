@@ -8,7 +8,7 @@
 
 基于 NimBLE 的 ESP32 BLE 服务组件，提供设备管理、OTA 固件升级、WiFi 配网、WS2812 LED 控制等功能。
 
-**版本**: 2.1.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
+**版本**: 2.2.1 | **协议栈**: NimBLE | **兼容**: ESP-IDF v5.x / v6.x
 
 ## 功能特性
 
@@ -57,7 +57,7 @@ ESP-IDF 组件管理器会自动从 GitHub 克隆并引入 `ble_srv` 组件。
 #### 方式二：通过 ESP-IDF 组件管理器引入
 
 ```bash
-idf.py add-dependency "ble_srv^2.1.1"
+idf.py add-dependency "ble_srv^2.2.1"
 ```
 
 该命令会自动将依赖添加到 `idf_component.yml` 中，并从 ESP-IDF 组件仓库下载。
@@ -267,8 +267,8 @@ docs/
   PYTHON_CLI.md            # CLI客户端详细使用说明
   PYTHON_GUI.md            # GUI客户端详细使用说明
 tools/
-  client.py                # Python BLE 命令行客户端 v2.1.1
-  client_gui.py            # Python BLE GUI 客户端入口 v2.1.1
+  client.py                # Python BLE 命令行客户端 v2.2.1
+  client_gui.py            # Python BLE GUI 客户端入口 v2.2.1
   client/                  # CLI客户端核心模块
   client_gui/              # GUI客户端模块
 examples/
@@ -310,6 +310,27 @@ examples/
 - flet >= 0.20.0（GUI库，仅GUI客户端需要）
 
 ## 变更记录
+
+### v2.2.1 (2026-07-23)
+
+**设备端**:
+- **日志清理修复**: 修复 `ble_srv_log_cleanup_old_files()` 中"最旧文件"选取失效的 bug（`time_t oldest_time = ~0ULL` 在有符号 `time_t` 下变为 `-1`，导致比较恒为假、文件从不被删除，日志文件数突破 `BLE_SRV_LOG_MAX_FILES`）
+- **清理策略改为按序号**: "最旧"改为按文件名序号（`%06lu`）判定，不再依赖 `stat` 的 `mtime`，无需可靠 RTC 时间；新增 `ble_srv_log_parse_file_number()` 辅助函数
+- **HTTP 服务 socket 修复**: 修复日志 HTTP 服务在 `CONFIG_LWIP_MAX_SOCKETS` 较小工程上启动失败（`ESP_ERR_INVALID_ARG`）；按 `max_open_sockets + 3 <= CONFIG_LWIP_MAX_SOCKETS` 自动收敛 `max_open_sockets`
+- **日志 Web 页面**: 文件列表标题改为显示当前数与上限（`共 N / MAX 个`）
+
+**示例工程**:
+- `examples/basic/sdkconfig(.defaults)`: `CONFIG_LWIP_MAX_SOCKETS` 4 → 10
+
+**客户端 (Python)**:
+- 合并 CLI/GUI 两套 BLE 客户端为统一的 `tools/client/ble_core.py` 与统一 `models.py`；GUI 采用线程安全的 `safe_update` 更新机制
+- 修复扫描器未正确停止、`asyncio.get_event_loop()` 弃用告警等问题
+
+**版本号同步**:
+- `ble_srv/idf_component.yml`: 2.1.1 → 2.2.1
+- `examples/basic/CMakeLists.txt`: 2.1.1 → 2.2.1
+- `tools/client.py` / `tools/client_gui.py`: 2.1.1 → 2.2.1
+- 文档版本号同步更新
 
 ### v2.1.1 (2026-07-23)
 
