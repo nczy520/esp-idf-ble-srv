@@ -435,8 +435,8 @@ class BleCore:
             if on_device_found:
                 try:
                     on_device_found(info)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[BLE] Device found callback error: {e}")
 
         self._log("开始扫描BLE设备...", "info")
         scanner = BleakScanner(detection_callback=detection_callback)
@@ -463,6 +463,9 @@ class BleCore:
             self._is_connected = False
             await asyncio.sleep(0.3)
 
+        self._notify_gen += 1
+        self._log_notify_gen += 1
+        self._custom_cmd_notify_gen += 1
         self._connect_gen += 1
         gen = self._connect_gen
         self._disconnect_event = asyncio.Event()
@@ -607,8 +610,8 @@ class BleCore:
         try:
             if self._custom_cmd_callback:
                 self._custom_cmd_callback(bytes(data))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[BLE] Custom cmd callback error: {e}")
 
     async def _unsubscribe_custom_cmd_notify(self):
         """取消自定义命令特征值通知订阅"""

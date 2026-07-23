@@ -181,18 +181,25 @@ class BaseHandler:
         if btn.style:
             btn.style.elevation = 0
 
-    def _apply_loading_style(self, btn):
-        """为按钮应用Loading视觉样式：原色70%透明、无阴影"""
+    def _apply_loading_style(self, btn, loading_text="加载中"):
+        """为按钮应用Loading视觉样式：原色70%透明、无阴影，文本改为加载中，图标改为Loading"""
         if not hasattr(btn, '_saved_bgcolor'):
             btn._saved_bgcolor = btn.bgcolor
         if not hasattr(btn, '_saved_color'):
             btn._saved_color = btn.color
         if not hasattr(btn, '_saved_elevation'):
             btn._saved_elevation = btn.style.elevation if btn.style else 2
+        # Flet 0.80+ 的 ElevatedButton 文本存于 content 属性（字符串或控件）
+        if not hasattr(btn, '_saved_content'):
+            btn._saved_content = btn.content
+        if not hasattr(btn, '_saved_icon'):
+            btn._saved_icon = btn.icon
         btn.bgcolor = ft.Colors.with_opacity(0.7, btn._saved_bgcolor) if btn._saved_bgcolor else btn.bgcolor
         btn.color = ft.Colors.with_opacity(0.7, btn._saved_color) if btn._saved_color else btn.color
         if btn.style:
             btn.style.elevation = 0
+        btn.content = loading_text
+        btn.icon = ft.Icons.SYNC
 
     def _restore_button_style(self, btn):
         """恢复按钮原始视觉样式"""
@@ -205,8 +212,14 @@ class BaseHandler:
         if hasattr(btn, '_saved_elevation') and btn.style:
             btn.style.elevation = btn._saved_elevation
             del btn._saved_elevation
+        if hasattr(btn, '_saved_content'):
+            btn.content = btn._saved_content
+            del btn._saved_content
+        if hasattr(btn, '_saved_icon'):
+            btn.icon = btn._saved_icon
+            del btn._saved_icon
 
-    def _show_btn_loading(self, active_btn, loading_text="处理中..."):
+    def _show_btn_loading(self, active_btn, loading_text="加载中"):
         """显示按钮Loading状态 - 禁用除scan/connect外的所有按钮，激活按钮显示Loading"""
         self._loading_count += 1
         excluded = self._get_excluded_buttons()
@@ -215,7 +228,7 @@ class BaseHandler:
                 continue
             if btn is active_btn:
                 btn.disabled = True
-                self._apply_loading_style(btn)
+                self._apply_loading_style(btn, loading_text)
             else:
                 btn.disabled = True
                 self._apply_disabled_style(btn)
@@ -259,7 +272,7 @@ class BaseHandler:
                 abort_btn.disabled = True
                 self._apply_disabled_style(abort_btn)
 
-    def _run_with_loading(self, btn, coro, callback, loading_text="读取中...", timeout=3):
+    def _run_with_loading(self, btn, coro, callback, loading_text="加载中", timeout=3):
         """带Loading状态的异步执行"""
         self._show_btn_loading(btn, loading_text)
 

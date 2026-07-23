@@ -21,7 +21,7 @@
 
 static const char *TAG = "OTA_URL";
 
-#define OTA_URL_TASK_STACK    8192
+#define OTA_URL_TASK_STACK    6144
 #define OTA_URL_TASK_PRIO     5
 #define FW_HEADER_BUF_SIZE    4096
 #define HTTP_TIMEOUT_MS       10000
@@ -292,8 +292,7 @@ static version_check_result_t check_version(const char *fw_url, uint8_t gen)
         return VERSION_CHECK_SKIP;
     }
 
-    uint8_t *hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!hdr) hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    uint8_t *hdr = heap_caps_malloc(FW_HEADER_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!hdr) {
         OTA_LOGW("Header alloc failed, skipping version check");
         esp_http_client_close(client);

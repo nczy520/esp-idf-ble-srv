@@ -33,6 +33,7 @@ static const char *TAG = "BLE_SRV_LOG";
 #define BLE_SRV_LOG_QUEUE_SIZE CONFIG_BLE_SRV_LOG_QUEUE_SIZE
 #define BLE_SRV_LOG_LINE_SIZE CONFIG_BLE_SRV_LOG_LINE_SIZE
 #define BLE_SRV_LOG_FLUSH_INTERVAL_MS CONFIG_BLE_SRV_LOG_FLUSH_INTERVAL_MS
+#define BLE_SRV_LOG_FSYNC_EVERY_N_FLUSH CONFIG_BLE_SRV_LOG_FSYNC_EVERY_N_FLUSH
 
 #ifndef CONFIG_BLE_SRV_NTP_TIMEZONE
 #define CONFIG_BLE_SRV_NTP_TIMEZONE "CST-8"
@@ -54,6 +55,7 @@ static QueueHandle_t s_log_queue = NULL;
 static uint8_t *s_log_queue_storage = NULL;
 static StaticQueue_t s_log_queue_struct;
 static esp_timer_handle_t s_flush_timer = NULL;
+static uint32_t s_flush_count_since_fsync = 0;
 
 // LOG_LOCK 返回 true 表示成功获取锁；超时返回 false，调用方必须检查并直接 return
 #define LOG_LOCK()        (s_log_lock && xSemaphoreTake(s_log_lock, pdMS_TO_TICKS(1000)) == pdTRUE)
@@ -475,8 +477,7 @@ void ble_srv_log_deinit(void)
         esp_vfs_littlefs_unregister(BLE_SRV_LOG_LITTLEFS_PARTITION);
     } else if (s_storage == BLE_SRV_LOG_STORAGE_SD) {
 #ifdef CONFIG_BLE_SRV_LOG_SD_ENABLED
-        esp_vfs_unregister(BLE_SRV_LOG_SD_PATH);
-        sdmmc_host_deinit();
+        esp_vfs_fat_sdcard_unmount(BLE_SRV_LOG_SD_PATH, s_sd_card);
         s_sd_card = NULL;
 #endif
     }
@@ -621,6 +622,12 @@ void ble_srv_log_flush_queue(void)
 
             if (s_current_file_size >= BLE_SRV_LOG_MAX_FILE_SIZE) {
                 ESP_LOGI(TAG, "Log file size limit reached, rotating...");
+                // 文件轮转时必须 fsync 确保旧文件数据落盘
+                if (s_log_file) {
+                    fflush(s_log_file);
+                    fsync(fileno(s_log_file));
+                }
+                s_flush_count_since_fsync = 0;
                 ble_srv_log_close_file();
                 ble_srv_log_open_new_file();
                 if (!s_log_file) {
@@ -632,8 +639,22 @@ void ble_srv_log_flush_queue(void)
     }
 
     if (batch_count > 0) {
+        // fflush 将 C 库缓冲写入 VFS 层（开销小）
         fflush(s_log_file);
-        fsync(fileno(s_log_file));
+
+        // fsync 强制物理写入 flash（开销大，按频率控制）
+        bool should_fsync = false;
+        if (BLE_SRV_LOG_FSYNC_EVERY_N_FLUSH > 0) {
+            s_flush_count_since_fsync++;
+            if (s_flush_count_since_fsync >= (uint32_t)BLE_SRV_LOG_FSYNC_EVERY_N_FLUSH) {
+                should_fsync = true;
+            }
+        }
+
+        if (should_fsync) {
+            fsync(fileno(s_log_file));
+            s_flush_count_since_fsync = 0;
+        }
     }
 
     LOG_UNLOCK();
@@ -702,6 +723,12 @@ int ble_srv_log_read_file(const char *filename, char *buffer, int max_len)
         return -1;
     }
 
+    // 路径遍历防护：仅允许 "NNNNNN.log" 格式，拒绝任何含 '/' '\\' '..' 的输入。
+    if (!ble_srv_log_is_valid_log_file(filename)) {
+        ESP_LOGW(TAG, "Rejected invalid log filename: %s", filename);
+        return -1;
+    }
+
     if (!s_initialized || s_storage == BLE_SRV_LOG_STORAGE_NONE) {
         return -1;
     }
@@ -744,6 +771,12 @@ int ble_srv_log_read_file_lines(const char *filename, int max_lines, char *buffe
         return -1;
     }
 
+    // 路径遍历防护：仅允许 "NNNNNN.log" 格式。
+    if (!ble_srv_log_is_valid_log_file(filename)) {
+        ESP_LOGW(TAG, "Rejected invalid log filename: %s", filename);
+        return -1;
+    }
+
     if (!s_initialized || s_storage == BLE_SRV_LOG_STORAGE_NONE) {
         return -1;
     }
@@ -764,6 +797,11 @@ int ble_srv_log_read_file_lines(const char *filename, int max_lines, char *buffe
 
     fseek(f, 0, SEEK_END);
     long file_size = ftell(f);
+    if (file_size < 0) {
+        fclose(f);
+        LOG_UNLOCK();
+        return -1;
+    }
     fseek(f, 0, SEEK_SET);
 
     char *file_buf = (char *)malloc(file_size + 1);
@@ -806,6 +844,12 @@ int ble_srv_log_read_file_lines(const char *filename, int max_lines, char *buffe
 bool ble_srv_log_delete_file(const char *filename)
 {
     if (!filename) {
+        return false;
+    }
+
+    // 路径遍历防护：仅允许 "NNNNNN.log" 格式。
+    if (!ble_srv_log_is_valid_log_file(filename)) {
+        ESP_LOGW(TAG, "Rejected invalid log filename: %s", filename);
         return false;
     }
 
@@ -1189,6 +1233,13 @@ static esp_err_t log_http_file_handler(httpd_req_t *req)
 
     const char *filename = uri + 6;
     if (strlen(filename) == 0) {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+
+    // 路径遍历防护：HTTP 入口最易受攻击，严格校验 "NNNNNN.log" 格式。
+    if (!ble_srv_log_is_valid_log_file(filename)) {
+        ESP_LOGW(TAG, "HTTP rejected invalid log filename: %s", filename);
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }

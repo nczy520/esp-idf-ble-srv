@@ -176,5 +176,5 @@ class GuiComponents:
             handlers = self.app.handlers
             if idx == 3:  # 日志Tab
                 handlers.log_control.on_tab_selected()
-        except Exception:
-            pass
+        except Exception as ex:
+            print(f"[GUI] Tab change error: {ex}")

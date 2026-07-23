@@ -521,8 +521,19 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
         if (data_len == 0 || data_len > BLE_SRV_AUTH_PIN_MAX_LEN) {
             return;
         }
-        bool match = (strlen(s_auth_pin) == data_len &&
-                      memcmp(data, s_auth_pin, data_len) == 0);
+        // 常量时间 PIN 比较，防止时序侧信道攻击：
+        // 1. 不使用 strlen 提前退出（长度差异纳入累加器）
+        // 2. 不使用 memcmp（其可在首个不匹配字节提前返回）
+        // 3. 始终遍历完整 BLE_SRV_AUTH_PIN_MAX_LEN，保证不同输入耗时一致
+        // 4. 使用 volatile 防止编译器优化为短路分支
+        size_t pin_len = strnlen(s_auth_pin, BLE_SRV_AUTH_PIN_MAX_LEN);
+        volatile uint8_t diff = (uint8_t)(pin_len ^ data_len);
+        for (size_t i = 0; i < BLE_SRV_AUTH_PIN_MAX_LEN; i++) {
+            uint8_t pin_byte  = (i < pin_len)  ? (uint8_t)s_auth_pin[i] : 0;
+            uint8_t data_byte = (i < data_len) ? (uint8_t)data[i]      : 0;
+            diff |= (uint8_t)(pin_byte ^ data_byte);
+        }
+        bool match = (diff == 0);
         // per-connection 记录认证结果，并主动 notify 客户端。
         ble_srv_auth_slot_t *slot = ble_srv_gatt_get_auth_slot(conn_handle, true);
         if (slot) {
@@ -660,8 +671,10 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
         }
     } else if (attr_handle == s_led_effect_chr_val_handle) {
         if (data_len >= sizeof(ble_led_effect_config_t)) {
-            const ble_led_effect_config_t *cfg = (const ble_led_effect_config_t *)data;
-            ble_srv_led_set_effect((ble_led_effect_t)cfg->effect, cfg->speed);
+            // 使用 memcpy 避免 uint8_t* 到结构体指针的严格别名违规与对齐风险
+            ble_led_effect_config_t cfg;
+            memcpy(&cfg, data, sizeof(cfg));
+            ble_srv_led_set_effect((ble_led_effect_t)cfg.effect, cfg.speed);
         } else if (data_len >= 1) {
             ble_srv_led_set_effect((ble_led_effect_t)data[0], 50);
         }
@@ -919,9 +932,9 @@ void ble_srv_gatt_log_send(ble_srv_log_level_t level, const char *tag, const cha
     char line[BLE_SRV_LOG_MAX_LEN + 32];
     int written;
     if (tag && tag[0]) {
-        written = snprintf(line, sizeof(line), "[%c] [%s] %s", (char)level, tag, body);
+        written = snprintf(line, sizeof(line), "[%c] [%s] %s", ble_srv_gatt_log_level_char(level), tag, body);
     } else {
-        written = snprintf(line, sizeof(line), "[%c] %s", (char)level, body);
+        written = snprintf(line, sizeof(line), "[%c] %s", ble_srv_gatt_log_level_char(level), body);
     }
     if (written < 0) {
         return;

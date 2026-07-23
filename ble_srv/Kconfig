@@ -83,6 +83,18 @@ menu "BLE Service"
                 When disabled, OTA will be rejected if the remote firmware version
                 is older than the current version. Enable this for testing or when
                 you need to roll back to a previous version.
+
+        config BLE_SRV_OTA_URL_AUTO_UPDATE_ENABLED
+            bool "Auto OTA on WiFi Connect"
+            default n
+            depends on BLE_SRV_OTA_URL_ENABLED
+            help
+                Automatically check for firmware updates when WiFi connects.
+                After WiFi connection, the device will:
+                1. Sync NTP time (if NTP enabled)
+                2. Check firmware version against the Default Firmware URL
+                3. Download and apply update if a newer version is available
+                Requires BLE_SRV_OTA_URL_DEFAULT to be configured.
     endmenu
 
     menu "WiFi"
@@ -263,6 +275,18 @@ menu "BLE Service"
                 Interval in milliseconds between periodic log flushes to file.
                 Smaller interval means more frequent writes but less data loss
                 on crash. Larger interval is more efficient but risks more data loss.
+                Default 1000ms balances flash wear and data safety.
+
+        config BLE_SRV_LOG_FSYNC_EVERY_N_FLUSH
+            int "fsync Every N Flushes"
+            default 3
+            depends on BLE_SRV_LOG_ENABLED
+            help
+                Call fsync (force physical write to flash) every N periodic
+                flushes. Between fsync calls, only fflush (OS buffer flush) is
+                used. Set to 1 to fsync on every flush (maximum durability,
+                maximum wear). Set to 0 to disable periodic fsync entirely
+                (fsync only on file rotation/deinit). Default 10.
 
         config BLE_SRV_LOG_MAX_FILES
             int "Maximum Log Files"

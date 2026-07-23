@@ -58,7 +58,7 @@ class LeftPanelComponent(BaseComponent):
             label="PIN",
             prefix_icon=ft.Icons.LOCK_OUTLINE,
             password=True,
-            value="112233",
+            value="123456",
             input_filter=ft.NumbersOnlyInputFilter(),
             max_length=8,
             counter_style=ft.TextStyle(size=0),

@@ -33,6 +33,6 @@ direct_dependencies:
 - idf
 - joltwallet/littlefs
 - michmich/esp-idf-wifi-provisioner
-manifest_hash: def5fa7bfe6ade255025b89b9a00c0ca5bd04762c48dc8f26c6383d78575c7fc
+manifest_hash: dcad5d4da138efbff8587793f04ef81b48e1c81c11ddef4336b70500860c2961
 target: esp32s3
 version: 3.0.0

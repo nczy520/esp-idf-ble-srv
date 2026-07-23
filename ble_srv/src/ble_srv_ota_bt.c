@@ -64,19 +64,24 @@ static inline uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t le
 
 static bool s_initialized = false;
 
-static uint8_t s_gen = BLE_OTA_INVALID_GEN;
-static esp_ota_handle_t s_ota_handle = 0;
+static SemaphoreHandle_t s_bt_lock = NULL;
+
+#define BT_LOCK()   xSemaphoreTakeRecursive(s_bt_lock, portMAX_DELAY)
+#define BT_UNLOCK() xSemaphoreGiveRecursive(s_bt_lock)
+
+static volatile uint8_t s_gen = BLE_OTA_INVALID_GEN;
+static volatile esp_ota_handle_t s_ota_handle = 0;
 static const esp_partition_t *s_target_partition = NULL;
-static uint32_t s_fw_total_size = 0;
-static uint32_t s_fw_crc = 0;
-static uint32_t s_running_crc = 0xFFFFFFFF;
-static uint32_t s_fw_bytes_written = 0;
-static uint32_t s_total_received = 0;
+static volatile uint32_t s_fw_total_size = 0;
+static volatile uint32_t s_fw_crc = 0;
+static volatile uint32_t s_running_crc = 0xFFFFFFFF;
+static volatile uint32_t s_fw_bytes_written = 0;
+static volatile uint32_t s_total_received = 0;
 
 static uint8_t *s_write_buf = NULL;
-static uint32_t s_write_buf_len = 0;
-static uint16_t s_packet_count = 0;
-static bool s_receiving = false;
+static volatile uint32_t s_write_buf_len = 0;
+static volatile uint16_t s_packet_count = 0;
+static volatile bool s_receiving = false;
 
 static void bt_cleanup(void)
 {
@@ -106,15 +111,16 @@ static void bt_flush_and_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err
 
 void ble_srv_ota_bt_handle_abort(void)
 {
+    BT_LOCK();
     uint8_t gen = s_gen;
     bool is_bt_mode = (ble_srv_ota_get_mode() == BLE_OTA_MODE_BT);
     bool gen_valid = (gen != BLE_OTA_INVALID_GEN) && ble_srv_ota_gen_valid(gen);
 
-    if (!is_bt_mode || !gen_valid) {
-        return;
+    if (is_bt_mode && gen_valid) {
+        BLE_SRV_LOGW(TAG, "OTA abort, gen=%u", gen);
+        bt_flush_and_finish(gen, BLE_OTA_STATE_ABORTED, BLE_OTA_ERR_ABORTED);
     }
-    BLE_SRV_LOGW(TAG, "OTA abort, gen=%u", gen);
-    bt_flush_and_finish(gen, BLE_OTA_STATE_ABORTED, BLE_OTA_ERR_ABORTED);
+    BT_UNLOCK();
 }
 
 bool ble_srv_ota_bt_init(void)
@@ -124,6 +130,12 @@ bool ble_srv_ota_bt_init(void)
         return true;
     }
 
+    s_bt_lock = xSemaphoreCreateRecursiveMutex();
+    if (!s_bt_lock) {
+        BLE_SRV_LOGE(TAG, "Failed to create BT OTA lock");
+        return false;
+    }
+
     s_write_buf = heap_caps_malloc(BLE_SRV_WRITE_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_write_buf) {
         BLE_SRV_LOGW(TAG, "PSRAM alloc failed for %d bytes, trying internal RAM", BLE_SRV_WRITE_BUF_SIZE);
@@ -131,6 +143,8 @@ bool ble_srv_ota_bt_init(void)
     }
     if (!s_write_buf) {
         BLE_SRV_LOGE(TAG, "Failed to allocate OTA write buffer (%d bytes)", BLE_SRV_WRITE_BUF_SIZE);
+        vSemaphoreDelete(s_bt_lock);
+        s_bt_lock = NULL;
         return false;
     }
 
@@ -161,8 +175,10 @@ void ble_srv_ota_bt_deinit(void)
         ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
     }
 
+    BT_LOCK();
     bt_cleanup();
     s_gen = BLE_OTA_INVALID_GEN;
+    BT_UNLOCK();
 
     if (s_write_buf) {
         heap_caps_free(s_write_buf);
@@ -170,6 +186,11 @@ void ble_srv_ota_bt_deinit(void)
     }
 
     s_initialized = false;
+
+    if (s_bt_lock) {
+        vSemaphoreDelete(s_bt_lock);
+        s_bt_lock = NULL;
+    }
 }
 
 static bool handle_start(const uint8_t *data, uint16_t len)
@@ -187,9 +208,11 @@ static bool handle_start(const uint8_t *data, uint16_t len)
 
     s_gen = gen;
 
-    const ble_ota_bt_start_req_t *req = (const ble_ota_bt_start_req_t *)data;
-    s_fw_total_size = req->fw_size;
-    s_fw_crc = req->fw_crc;
+    // 使用 memcpy 避免 uint8_t* 到结构体指针的严格别名违规与对齐风险
+    ble_ota_bt_start_req_t req;
+    memcpy(&req, data, sizeof(req));
+    s_fw_total_size = req.fw_size;
+    s_fw_crc = req.fw_crc;
     s_running_crc = 0xFFFFFFFF;
 
     BLE_SRV_LOGI(TAG, "OTA start: size=%lu, crc=0x%08lX, gen=%u",
@@ -228,7 +251,10 @@ static bool handle_start(const uint8_t *data, uint16_t len)
     s_running_crc = 0xFFFFFFFF;
     s_packet_count = 0;
 
-    esp_err_t ret = esp_ota_begin(s_target_partition, s_fw_total_size, &s_ota_handle);
+    // s_ota_handle 为 volatile，需用非 volatile 临时变量接收 esp_ota_begin 输出
+    esp_ota_handle_t ota_handle = 0;
+    esp_err_t ret = esp_ota_begin(s_target_partition, s_fw_total_size, &ota_handle);
+    s_ota_handle = ota_handle;
     if (ret != ESP_OK) {
         BLE_SRV_LOGE(TAG, "Start fail: ota_begin %s", esp_err_to_name(ret));
         bt_cleanup();
@@ -373,6 +399,9 @@ bool ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len)
         return false;
     }
 
+    BT_LOCK();
+    bool result = false;
+
     ble_ota_bt_cmd_t cmd = (ble_ota_bt_cmd_t)data[0];
     uint16_t payload_len = len - 1;
     const uint8_t *payload = data + 1;
@@ -382,24 +411,30 @@ bool ble_srv_ota_bt_dispatch_cmd(const uint8_t *data, uint16_t len)
 
     switch (cmd) {
     case BLE_OTA_BT_CMD_START:
-        return handle_start(payload, payload_len);
+        result = handle_start(payload, payload_len);
+        break;
     case BLE_OTA_BT_CMD_ABORT:
         if (ble_srv_ota_get_mode() == BLE_OTA_MODE_BT) {
             ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
-            return true;
+            result = true;
         }
-        return false;
+        break;
     case BLE_OTA_BT_CMD_VERIFY:
-        return handle_verify();
+        result = handle_verify();
+        break;
     case BLE_OTA_BT_CMD_APPLY:
-        return handle_apply();
+        result = handle_apply();
+        break;
     default:
         BLE_SRV_LOGW(TAG, "Unknown cmd: 0x%02X", cmd);
-        return false;
+        break;
     }
+
+    BT_UNLOCK();
+    return result;
 }
 
-bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
+static bool process_fw_data_locked(const uint8_t *data, uint16_t len)
 {
     uint8_t gen = s_gen;
     if (gen == BLE_OTA_INVALID_GEN || !ble_srv_ota_gen_valid(gen)) {
@@ -526,4 +561,12 @@ bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
     }
 
     return true;
+}
+
+bool ble_srv_ota_bt_process_fw_data(const uint8_t *data, uint16_t len)
+{
+    BT_LOCK();
+    bool result = process_fw_data_locked(data, len);
+    BT_UNLOCK();
+    return result;
 }

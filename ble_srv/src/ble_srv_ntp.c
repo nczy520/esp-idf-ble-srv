@@ -10,9 +10,10 @@
 
 static const char *TAG = "BLE_SRV_NTP";
 
-#define NTP_MAX_RETRIES           10
+#define NTP_MAX_RETRIES           30
 #define NTP_RETRY_INTERVAL_MS     1000
 #define NTP_DEINIT_WAIT_MS        2000
+#define NTP_MIN_VALID_TIMESTAMP   1704067200
 
 #ifdef CONFIG_BLE_SRV_NTP_ENABLED
 static const char *ntp_servers[] = {
@@ -28,15 +29,13 @@ static volatile bool s_ntp_stop = false;
 
 static void sntp_time_sync_notification_cb(struct timeval *tv)
 {
-    BLE_SRV_LOGI(TAG, "NTP time sync completed");
-
     time_t now = time(NULL);
     struct tm timeinfo = {0};
     localtime_r(&now, &timeinfo);
 
     char strftime_buf[64];
-    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    BLE_SRV_LOGI(TAG, "Current local time: %s", strftime_buf);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    BLE_SRV_LOGI(TAG, "NTP time sync completed: %s", strftime_buf);
 }
 
 static void ntp_sync_task(void *arg)
@@ -72,27 +71,39 @@ static void ntp_sync_task(void *arg)
     const int max_retry = NTP_MAX_RETRIES;
     bool success = false;
     while (retry < max_retry && !s_ntp_stop) {
-        time_t now = time(NULL);
-        if (now > 1000000000) {
-            BLE_SRV_LOGI(TAG, "NTP sync successful");
-            success = true;
-            break;
+        sntp_sync_status_t status = esp_sntp_get_sync_status();
+        if (status == SNTP_SYNC_STATUS_COMPLETED) {
+            time_t now = time(NULL);
+            if (now > NTP_MIN_VALID_TIMESTAMP) {
+                BLE_SRV_LOGI(TAG, "NTP sync successful (status=%d)", status);
+                success = true;
+                break;
+            }
         }
-        BLE_SRV_LOGI(TAG, "Waiting for NTP sync... (%d/%d)", retry + 1, max_retry);
+        BLE_SRV_LOGI(TAG, "Waiting for NTP sync... (%d/%d) status=%d",
+                     retry + 1, max_retry, status);
         vTaskDelay(pdMS_TO_TICKS(NTP_RETRY_INTERVAL_MS));
         retry++;
     }
 
     if (s_ntp_stop) {
         BLE_SRV_LOGI(TAG, "NTP sync task stopped");
+        if (esp_sntp_enabled()) {
+            esp_sntp_stop();
+        }
     } else if (success) {
         BLE_SRV_LOGI(TAG, "NTP sync completed successfully");
+        time_t now = time(NULL);
+        struct tm timeinfo = {0};
+        localtime_r(&now, &timeinfo);
+        char strftime_buf[64];
+        strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+        BLE_SRV_LOGI(TAG, "Local time: %s", strftime_buf);
     } else {
         BLE_SRV_LOGE(TAG, "NTP sync timed out");
-    }
-
-    if (esp_sntp_enabled()) {
-        esp_sntp_stop();
+        if (esp_sntp_enabled()) {
+            esp_sntp_stop();
+        }
     }
 
     s_ntp_task = NULL;

@@ -43,6 +43,8 @@ static volatile uint16_t s_active_mtu = 23;
 
 static char s_device_name[64] = {0};
 static TimerHandle_t s_restart_timer = NULL;
+// 防止重复初始化或未初始化 deinit；与各子模块的 s_initialized 约定保持一致。
+static bool s_initialized = false;
 
 static void restart_timer_cb(TimerHandle_t timer)
 {
@@ -277,6 +279,11 @@ static void ble_srv_host_task(void *param)
 
 bool ble_srv_init(void)
 {
+    if (s_initialized) {
+        BLE_SRV_LOGW(TAG, "BLE Service already initialized");
+        return true;
+    }
+
     BLE_SRV_LOGI(TAG, "Initializing BLE Service (NimBLE)");
 
     uint8_t mac[6];
@@ -404,12 +411,17 @@ bool ble_srv_init(void)
         BLE_SRV_LOGW(TAG, "Temperature sensor init failed (non-critical)");
     }
 
+    s_initialized = true;
     BLE_SRV_LOGI(TAG, "BLE Service ready, device=%s", s_device_name);
     return true;
 }
 
 void ble_srv_deinit(void)
 {
+    if (!s_initialized) {
+        return;
+    }
+
     BLE_SRV_LOGI(TAG, "Deinitializing BLE Service");
 
     ble_srv_ota_abort(BLE_OTA_ERR_ABORTED);
@@ -442,6 +454,8 @@ void ble_srv_deinit(void)
     }
 
     ble_srv_msg_deinit();
+
+    s_initialized = false;
 }
 
 bool ble_srv_is_connected(void)

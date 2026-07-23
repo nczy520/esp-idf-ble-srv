@@ -3,6 +3,7 @@ OTA升级Tab组件
 """
 
 import flet as ft
+from typing import Any
 from client_gui.components.tabs.base_tab import BaseTabComponent
 
 
@@ -186,7 +187,7 @@ class OTATabComponent(BaseTabComponent):
             except Exception:
                 pass
 
-    def _on_file_picked(self, e: ft.FilePickerResultEvent):
+    def _on_file_picked(self, e: Any):
         """Flet FilePicker 选择完成回调（仅 macOS 使用）"""
         if not e.files or len(e.files) == 0:
             return

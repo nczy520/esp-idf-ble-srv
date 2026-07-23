@@ -5,6 +5,7 @@
 #include "ble_srv_ota_bt.h"
 #include "ble_srv_ota_url.h"
 #include "ble_srv_led.h"
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -83,7 +84,7 @@ static void msg_pool_free(ble_srv_msg_t *msg)
 bool ble_srv_msg_send(ble_srv_msg_type_t type, const uint8_t *data, uint16_t data_len,
                       uint16_t attr_handle, uint16_t conn_handle, TickType_t wait)
 {
-    bool is_isr = (xTaskGetCurrentTaskHandle() == NULL);
+    bool is_isr = xPortInIsrContext();
 
     ble_srv_msg_t *msg;
     // 任务上下文允许在 wait 时限内轮询等待池槽回收，避免池瞬时耗尽导致
@@ -185,9 +186,13 @@ static void dispatch_msg(ble_srv_msg_t *msg)
     case MSG_GAP_SUBSCRIBE:
         ble_srv_core_handle_subscribe(msg->attr_handle, msg->conn_handle, msg->data, msg->data_len);
         break;
-    case MSG_GAP_MTU:
-        ble_srv_core_handle_mtu(msg->conn_handle, *(uint16_t *)msg->data);
+    case MSG_GAP_MTU: {
+        // 使用 memcpy 避免 uint8_t[] 到 uint16_t 的严格别名违规与对齐风险
+        uint16_t mtu;
+        memcpy(&mtu, msg->data, sizeof(mtu));
+        ble_srv_core_handle_mtu(msg->conn_handle, mtu);
         break;
+    }
     case MSG_GATT_WRITE:
         ble_srv_gatt_handle_write(msg->conn_handle, msg->attr_handle, msg->data, msg->data_len);
         break;
@@ -221,9 +226,13 @@ static void dispatch_msg(ble_srv_msg_t *msg)
     case MSG_LED_SET_EFFECT:
         ble_srv_led_set_effect((ble_led_effect_t)msg->data[0], msg->data[1]);
         break;
-    case MSG_SCHEDULE_RESTART:
-        ble_srv_schedule_restart_internal(*(uint32_t *)msg->data);
+    case MSG_SCHEDULE_RESTART: {
+        // 使用 memcpy 避免 uint8_t[] 到 uint32_t 的严格别名违规与对齐风险
+        uint32_t delay_ms;
+        memcpy(&delay_ms, msg->data, sizeof(delay_ms));
+        ble_srv_schedule_restart_internal(delay_ms);
         break;
+    }
     default:
         BLE_SRV_LOGW(TAG, "Unknown message type: %d", msg->type);
         break;

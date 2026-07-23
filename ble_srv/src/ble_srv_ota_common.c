@@ -16,7 +16,7 @@
 
 static const char *TAG = "OTA";
 
-static TimerHandle_t s_reset_timer = NULL;
+static volatile TimerHandle_t s_reset_timer = NULL;
 
 static volatile ble_ota_mode_t s_mode = BLE_OTA_MODE_NONE;
 static volatile ble_ota_state_t s_state = BLE_OTA_STATE_IDLE;
@@ -24,9 +24,9 @@ static volatile ble_ota_err_t s_error = BLE_OTA_ERR_NONE;
 static volatile bool s_abort_requested = false;
 static volatile uint8_t s_session_gen = 0;
 
-static uint32_t s_fw_size = 0;
-static uint32_t s_bytes_received = 0;
-static uint32_t s_bytes_written = 0;
+static volatile uint32_t s_fw_size = 0;
+static volatile uint32_t s_bytes_received = 0;
+static volatile uint32_t s_bytes_written = 0;
 
 static ble_srv_status_cb_t s_status_cb = NULL;
 
@@ -132,8 +132,9 @@ bool ble_srv_ota_init(void)
 
 void ble_srv_ota_deinit(void)
 {
-    if (s_reset_timer) {
-        xTimerStop(s_reset_timer, 0);
+    TimerHandle_t timer_at_entry = s_reset_timer;
+    if (timer_at_entry) {
+        xTimerStop(timer_at_entry, 0);
     }
     s_abort_requested = true;
     ble_ota_mode_t mode = s_mode;
@@ -148,9 +149,10 @@ void ble_srv_ota_deinit(void)
 
     vTaskDelay(pdMS_TO_TICKS(BLE_OTA_DEINIT_WAIT_MS));
 
-    if (s_reset_timer) {
-        xTimerDelete(s_reset_timer, portMAX_DELAY);
-        s_reset_timer = NULL;
+    TimerHandle_t timer = s_reset_timer;
+    s_reset_timer = NULL;
+    if (timer) {
+        xTimerDelete(timer, portMAX_DELAY);
     }
 }
 
@@ -161,8 +163,9 @@ uint8_t ble_srv_ota_begin(ble_ota_mode_t mode)
         return BLE_OTA_INVALID_GEN;
     }
 
-    if (s_reset_timer) {
-        xTimerStop(s_reset_timer, 0);
+    TimerHandle_t timer = s_reset_timer;
+    if (timer) {
+        xTimerStop(timer, 0);
     }
 
     if (is_terminal_state(s_state)) {
@@ -251,9 +254,10 @@ void ble_srv_ota_finish(uint8_t gen, ble_ota_state_t result, ble_ota_err_t error
     if (is_terminal) {
         s_mode = BLE_OTA_MODE_NONE;
         s_abort_requested = false;
-        if (s_reset_timer) {
-            xTimerReset(s_reset_timer, 0);
-            xTimerStart(s_reset_timer, 0);
+        TimerHandle_t timer = s_reset_timer;
+        if (timer) {
+            xTimerReset(timer, 0);
+            xTimerStart(timer, 0);
         }
     }
 

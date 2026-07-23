@@ -276,8 +276,8 @@ async def main():
         try:
             if connected:
                 await client.disconnect()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Disconnect error: {e}")
 
 
 if __name__ == '__main__':

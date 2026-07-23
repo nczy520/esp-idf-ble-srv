@@ -89,7 +89,7 @@ static void ws2812_rgb_to_rmt_symbols(uint8_t red, uint8_t green, uint8_t blue,
 
 static void ble_srv_led_send_pixel(uint8_t red, uint8_t green, uint8_t blue)
 {
-    if (!s_initialized || !s_led_chan || !s_copy_encoder) {
+    if (!s_led_chan || !s_copy_encoder) {
         return;
     }
 

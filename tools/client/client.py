@@ -108,6 +108,7 @@ class BLEDeviceClient:
         self._ota_ack_event = None
         self._ota_ack_bytes = 0
         self._ota_notify_started = False
+        self._notify_gen = 0
         self._last_ota_state = None
         self._connect_gen = 0
         self._disconnect_event = None
@@ -149,6 +150,8 @@ class BLEDeviceClient:
                 self._ota_active = False
                 if self._ota_ack_event:
                     self._ota_ack_event.set()
+                self._notify_gen += 1
+                self._ota_notify_started = False
 
         except Exception:
             pass
@@ -330,6 +333,7 @@ class BLEDeviceClient:
     def _on_disconnect(self, client):
         self.is_connected = False
         self._ota_notify_started = False
+        self._notify_gen += 1
         self._log_notify_started = False
         self._ota_active = False
         if self._ota_ack_event:
@@ -375,7 +379,6 @@ class BLEDeviceClient:
         disc_event = self._disconnect_event
         if old_client:
             self.client = None
-            self._connect_gen += 1
             try:
                 await old_client.disconnect()
             except Exception:
@@ -385,6 +388,7 @@ class BLEDeviceClient:
                     await asyncio.wait_for(disc_event.wait(), timeout=2.0)
                 except Exception:
                     pass
+            self._connect_gen += 1
             try:
                 await asyncio.sleep(0.3)
             except Exception:
@@ -565,12 +569,14 @@ class BLEDeviceClient:
             return False
 
     async def _stop_ota_notify(self):
+        notify_gen = self._notify_gen
         if self._ota_notify_started and self.client and self.client.is_connected:
             try:
                 await self.client.stop_notify(BLE_OTA_STATUS_CHAR_UUID)
             except Exception:
                 pass
-        self._ota_notify_started = False
+        if self._notify_gen == notify_gen:
+            self._ota_notify_started = False
 
     def _get_ota_error_msg(self):
         if not self.ota_status:

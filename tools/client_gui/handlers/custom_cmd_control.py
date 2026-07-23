@@ -104,8 +104,8 @@ class CustomCmdHandler(BaseHandler):
         """自定义命令响应回调"""
         try:
             self.add_cmd_log(data, direction="rx")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[CMD] Response handler error: {e}")
 
     def send_custom_cmd(self, event=None):
         """发送自定义命令"""
@@ -127,6 +127,8 @@ class CustomCmdHandler(BaseHandler):
 
         self.add_cmd_log(data, direction="tx")
 
+        btn = self.ui.custom_cmd_tab.send_btn
+
         def callback(result):
             if isinstance(result, Exception):
                 self.log(f"发送失败: {result}", "error")
@@ -135,7 +137,8 @@ class CustomCmdHandler(BaseHandler):
             if not ok:
                 self.log("发送失败", "error")
 
-        self.app.run_async(self.ble.custom_cmd_send(data), callback)
+        self._run_with_loading(btn, self.ble.custom_cmd_send(data), callback,
+                               loading_text="发送中", timeout=5)
 
     def clear_custom_cmd_log(self, event=None):
         """清空自定义命令日志"""
