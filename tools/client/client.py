@@ -30,6 +30,7 @@ from .constants import (
     BLE_LED_CTRL_CHAR_UUID,
     BLE_LED_COLOR_CHAR_UUID,
     BLE_LED_EFFECT_CHAR_UUID,
+    BLE_LED_LAYOUT_CHAR_UUID,
     BLE_LED_CTRL_ON,
     BLE_LED_CTRL_OFF,
     BLE_WIFI_STATUS_CHAR_UUID,
@@ -518,12 +519,33 @@ class BLEDeviceClient:
         return None
 
     async def led_set_effect(self, effect, speed=50):
-        effect_names = {0: "无", 1: "呼吸灯", 2: "闪烁", 3: "彩虹", 4: "频闪"}
+        effect_names = {
+            0: "无", 1: "呼吸灯", 2: "闪烁", 3: "彩虹", 4: "频闪",
+            5: "流光追逐", 6: "色彩擦除", 7: "剧场追逐", 8: "波浪",
+            9: "流星", 10: "火焰", 11: "扫描",
+        }
         if await self._write_gatt(BLE_LED_EFFECT_CHAR_UUID, bytes([effect, speed]), name="LED特效"):
             name = effect_names.get(effect, f"未知({effect})")
             print(f"LED特效已设置: {name}, 速度: {speed}")
             return True
         return False
+
+    async def led_set_layout(self, rows, cols):
+        if rows <= 0 or cols <= 0 or rows > 255 or cols > 255:
+            print("LED布局参数无效，rows/cols 必须在 1-255 之间")
+            return False
+        if await self._write_gatt(BLE_LED_LAYOUT_CHAR_UUID, bytes([rows, cols]), name="LED布局"):
+            print(f"LED布局已设置: {rows}x{cols} (共 {rows*cols} 颗)")
+            return True
+        return False
+
+    async def led_get_layout(self):
+        data = await self._read_gatt(BLE_LED_LAYOUT_CHAR_UUID, "LED布局")
+        if data and len(data) >= 2:
+            rows, cols = data[0], data[1]
+            print(f"LED布局: {rows}x{cols} (共 {rows*cols} 颗)")
+            return (rows, cols)
+        return None
 
     async def wifi_connect(self, ssid, password):
         ssid_bytes = ssid.encode('utf-8')[:32]

@@ -193,6 +193,34 @@ menu "BLE Service"
             help
                 GPIO pin number for WS2812 LED data line.
                 Default values per target: ESP32-S3=21, ESP32-C3/C6/H2=10, ESP32=2, ESP32-S2=18
+
+        config BLE_SRV_LED_ROWS
+            int "WS2812 LED Matrix Rows"
+            default 1
+            depends on BLE_SRV_LED_ENABLED
+            help
+                Number of rows in the WS2812 LED matrix.
+                Set to 1 for single LED or linear strip.
+                The total LED count is rows * cols.
+
+        config BLE_SRV_LED_COLS
+            int "WS2812 LED Matrix Columns"
+            default 1
+            depends on BLE_SRV_LED_ENABLED
+            help
+                Number of columns in the WS2812 LED matrix.
+                Set to N for a linear strip of N LEDs (rows=1).
+                The total LED count is rows * cols.
+                Maximum allowed: 64 columns (use PSRAM for larger layouts).
+
+        config BLE_SRV_LED_COUNT_MAX
+            int "Maximum LED Count (buffer preallocation)"
+            default 256
+            depends on BLE_SRV_LED_ENABLED
+            help
+                Maximum number of LEDs supported for runtime layout changes.
+                Frame and symbol buffers are preallocated based on this value.
+                Actual active LED count is rows * cols (configurable at runtime).
     endmenu
 
     menu "Log System"

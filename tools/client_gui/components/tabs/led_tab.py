@@ -31,6 +31,12 @@ class LEDTabComponent(BaseTabComponent):
         self.led_set_color_btn = None
         self.led_set_effect_btn = None
         self.led_overlay = None
+        # 布局配置控件
+        self.rows_field = None
+        self.cols_field = None
+        self.layout_info_text = None
+        self.led_set_layout_btn = None
+        self.led_get_layout_btn = None
 
     def _on_effect_selected(self, e):
         """特效选择回调"""
@@ -42,9 +48,9 @@ class LEDTabComponent(BaseTabComponent):
     def build(self):
         """构建LED控制Tab"""
         self.led_status_text = ft.Text("状态: 未知", size=13, color=ft.Colors.ON_SURFACE_VARIANT, weight=ft.FontWeight.W_500)
-        self.r_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=170, on_change=self._on_color_changed)
-        self.g_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=170, on_change=self._on_color_changed)
-        self.b_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=170, on_change=self._on_color_changed)
+        self.r_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=140, on_change=self._on_color_changed)
+        self.g_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=140, on_change=self._on_color_changed)
+        self.b_slider = ft.Slider(min=0, max=255, value=0, label="{value}", width=140, on_change=self._on_color_changed)
         self.r_val_text = ft.Text("00", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.RED, width=28, text_align=ft.TextAlign.RIGHT, font_family="monospace")
         self.g_val_text = ft.Text("00", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.GREEN, width=28, text_align=ft.TextAlign.RIGHT, font_family="monospace")
         self.b_val_text = ft.Text("00", size=11, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE, width=28, text_align=ft.TextAlign.RIGHT, font_family="monospace")
@@ -86,7 +92,7 @@ class LEDTabComponent(BaseTabComponent):
             height=40,
         )
         # 速度进度条和颜色进度条一样长
-        self.speed_slider = ft.Slider(min=1, max=255, value=50, label="{value}", width=220)
+        self.speed_slider = ft.Slider(min=1, max=255, value=50, label="{value}", width=160)
 
         self.led_on_btn = self._action_btn("开", ft.Icons.LIGHTBULB, "led_on", color=ft.Colors.GREEN)
         self.led_off_btn = self._action_btn("关", ft.Icons.LIGHTBULB_OUTLINE, "led_off", color=ft.Colors.RED)
@@ -94,12 +100,36 @@ class LEDTabComponent(BaseTabComponent):
         self.led_set_color_btn = self._action_btn("应用", ft.Icons.PALETTE, "led_set_color")
         self.led_set_effect_btn = self._action_btn("应用", ft.Icons.AUTO_AWESOME, "led_set_effect")
 
+        # 布局配置：行列输入与查询/应用按钮
+        self.rows_field = ft.TextField(
+            label="行",
+            value="1",
+            width=70,
+            height=40,
+            text_size=12,
+            input_filter=ft.NumbersOnlyInputFilter(),
+            text_align=ft.TextAlign.CENTER,
+            border_radius=6,
+        )
+        self.cols_field = ft.TextField(
+            label="列",
+            value="1",
+            width=70,
+            height=40,
+            text_size=12,
+            input_filter=ft.NumbersOnlyInputFilter(),
+            text_align=ft.TextAlign.CENTER,
+            border_radius=6,
+        )
+        self.layout_info_text = ft.Text("当前: 1x1", size=11, color=ft.Colors.ON_SURFACE_VARIANT, weight=ft.FontWeight.W_500)
+        self.led_set_layout_btn = self._action_btn("应用", ft.Icons.GRID_ON, "led_set_layout", color=ft.Colors.TEAL)
+        self.led_get_layout_btn = self._action_btn("查询", ft.Icons.GRID_VIEW_ROUNDED, "led_get_layout", color=ft.Colors.INDIGO)
+
         self.led_overlay = self._build_overlay()
 
         return ft.Stack([
             ft.Container(
                 content=ft.Column([
-                    # 第一行：开关和状态
                     ft.Row([
                         self.led_on_btn,
                         self.led_off_btn,
@@ -107,9 +137,7 @@ class LEDTabComponent(BaseTabComponent):
                         self.led_status_text,
                     ], spacing=8),
                     ft.Divider(height=12, color=ft.Colors.OUTLINE_VARIANT),
-                    # 第二行：颜色设置和特效设置并排
                     ft.Row([
-                        # 左侧：颜色设置
                         ft.Column([
                             ft.Text("颜色", size=12, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE),
                             ft.Row([
@@ -128,9 +156,25 @@ class LEDTabComponent(BaseTabComponent):
                                 self.b_slider,
                                 self.b_val_text,
                             ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                            self.led_set_color_btn,
-                        ], spacing=2, expand=3),
-                        # 右侧：特效设置
+                            ft.Container(content=self.led_set_color_btn, margin=ft.margin.Margin(0, 8, 0, 0)),
+                        ], spacing=4, expand=True),
+                        ft.VerticalDivider(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                        ft.Column([
+                            ft.Text("矩阵布局", size=12, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE),
+                            ft.Row([
+                                self.rows_field,
+                                ft.Text("×", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.ON_SURFACE_VARIANT),
+                                self.cols_field,
+                            ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            ft.Row([
+                                self.led_set_layout_btn,
+                                self.led_get_layout_btn,
+                            ], spacing=8),
+                            self.layout_info_text,
+                            ft.Text("配置灯珠行列数后点击「应用布局」即可在运行时切换；蛇形布线（zigzag）矩阵自动适配。",
+                                    size=10, color=ft.Colors.ON_SURFACE_VARIANT),
+                        ], spacing=8, expand=True),
+                        ft.VerticalDivider(width=1, color=ft.Colors.OUTLINE_VARIANT),
                         ft.Column([
                             ft.Text("特效", size=12, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE),
                             ft.Row([
@@ -141,9 +185,9 @@ class LEDTabComponent(BaseTabComponent):
                                 ft.Text("速度", size=11, width=32),
                                 self.speed_slider,
                             ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                            self.led_set_effect_btn,
-                        ], spacing=2, expand=2),
-                    ], spacing=24, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.START, expand=True),
+                            ft.Container(content=self.led_set_effect_btn, margin=ft.margin.Margin(0, 8, 0, 0)),
+                        ], spacing=8, expand=True),
+                    ], spacing=16, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.START, expand=True),
                 ], spacing=0, scroll=ft.ScrollMode.AUTO, expand=True),
                 padding=16,
                 bgcolor=ft.Colors.WHITE,

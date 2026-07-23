@@ -59,6 +59,7 @@ static bool s_wifi_status_notify_enabled = false;
 static uint16_t s_led_ctrl_chr_val_handle = 0;
 static uint16_t s_led_color_chr_val_handle = 0;
 static uint16_t s_led_effect_chr_val_handle = 0;
+static uint16_t s_led_layout_chr_val_handle = 0;
 #endif
 
 // 认证特征 notify 协议：单字节结果码，0x00=失败 0x01=成功。
@@ -170,6 +171,7 @@ static const ble_uuid16_t s_led_svc_uuid = BLE_UUID16_INIT(0xFFB0);
 static const ble_uuid16_t s_led_ctrl_chr_uuid = BLE_UUID16_INIT(0xFFB1);
 static const ble_uuid16_t s_led_color_chr_uuid = BLE_UUID16_INIT(0xFFB2);
 static const ble_uuid16_t s_led_effect_chr_uuid = BLE_UUID16_INIT(0xFFB3);
+static const ble_uuid16_t s_led_layout_chr_uuid = BLE_UUID16_INIT(0xFFB4);
 #endif
 
 #ifdef CONFIG_BLE_SRV_AUTH_ENABLED
@@ -346,6 +348,12 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
                 .val_handle = &s_led_effect_chr_val_handle,
             },
+            {
+                .uuid = &s_led_layout_chr_uuid.u,
+                .access_cb = ble_srv_gatt_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .val_handle = &s_led_layout_chr_val_handle,
+            },
             { 0 },
         },
     },
@@ -505,6 +513,13 @@ static int handle_read_chr(uint16_t conn_handle, uint16_t attr_handle, struct bl
                 .speed = status.speed,
             };
             rc = os_mbuf_append(ctxt->om, &cfg, sizeof(cfg));
+            return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
+        return BLE_ATT_ERR_UNLIKELY;
+    } else if (attr_handle == s_led_layout_chr_val_handle) {
+        ble_led_layout_t layout;
+        if (ble_srv_led_get_layout(&layout)) {
+            rc = os_mbuf_append(ctxt->om, &layout, sizeof(layout));
             return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
         return BLE_ATT_ERR_UNLIKELY;
@@ -677,6 +692,12 @@ void ble_srv_gatt_handle_write(uint16_t conn_handle, uint16_t attr_handle,
             ble_srv_led_set_effect((ble_led_effect_t)cfg.effect, cfg.speed);
         } else if (data_len >= 1) {
             ble_srv_led_set_effect((ble_led_effect_t)data[0], 50);
+        }
+    } else if (attr_handle == s_led_layout_chr_val_handle) {
+        if (data_len >= sizeof(ble_led_layout_t)) {
+            ble_led_layout_t layout;
+            memcpy(&layout, data, sizeof(layout));
+            ble_srv_led_set_layout(layout.rows, layout.cols);
         }
     }
 #endif

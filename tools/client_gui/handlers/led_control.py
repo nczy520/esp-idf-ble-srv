@@ -94,3 +94,41 @@ class LEDControlHandler(BaseHandler):
         def callback(result):
             self.log(f"LED特效设置: {name}, 速度: {speed}" if result else "设置LED特效失败", "success" if result else "error")
         self._run_with_loading(btn, self.ble.led_set_effect(effect, speed), callback, loading_text="设置中...")
+
+    def led_set_layout(self, event=None):
+        if not self.check_connected():
+            return
+        try:
+            rows = int(self.ui.led_tab.rows_field.value or "1")
+            cols = int(self.ui.led_tab.cols_field.value or "1")
+        except ValueError:
+            self.log("行列数必须为整数", "error")
+            return
+        if rows <= 0 or cols <= 0 or rows > 255 or cols > 255:
+            self.log("行列数取值范围: 1-255", "error")
+            return
+        btn = self.ui.led_tab.led_set_layout_btn
+        def callback(result):
+            if result:
+                self.ui.led_tab.layout_info_text.value = f"当前: {rows}x{cols}"
+                self.log(f"LED布局已设置: {rows}x{cols} (共 {rows*cols} 颗)", "success")
+            else:
+                self.log("设置LED布局失败", "error")
+            self.safe_update()
+        self._run_with_loading(btn, self.ble.led_set_layout(rows, cols), callback, loading_text="应用中...", timeout=5)
+
+    def led_get_layout(self, event=None):
+        if not self.check_connected():
+            return
+        btn = self.ui.led_tab.led_get_layout_btn
+        def callback(result):
+            if result is None:
+                self.log("读取LED布局失败", "error")
+            else:
+                rows, cols = result
+                self.ui.led_tab.rows_field.value = str(rows)
+                self.ui.led_tab.cols_field.value = str(cols)
+                self.ui.led_tab.layout_info_text.value = f"当前: {rows}x{cols}"
+                self.log(f"LED布局: {rows}x{cols} (共 {rows*cols} 颗)", "success")
+            self.safe_update()
+        self._run_with_loading(btn, self.ble.led_get_layout(), callback, loading_text="查询中...", timeout=5)

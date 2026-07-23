@@ -127,6 +127,8 @@ class BaseHandler:
                 self.ui.led_tab.led_status_btn,
                 self.ui.led_tab.led_set_color_btn,
                 self.ui.led_tab.led_set_effect_btn,
+                self.ui.led_tab.led_set_layout_btn,
+                self.ui.led_tab.led_get_layout_btn,
             ])
         if hasattr(self.ui, 'wifi_tab') and self.ui.wifi_tab:
             buttons.extend([

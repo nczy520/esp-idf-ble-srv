@@ -108,6 +108,12 @@ class GuiHandlers:
     def led_set_effect(self, event=None):
         self.led_control.led_set_effect(event)
 
+    def led_set_layout(self, event=None):
+        self.led_control.led_set_layout(event)
+
+    def led_get_layout(self, event=None):
+        self.led_control.led_get_layout(event)
+
     # === WiFi控制（委托给WiFiControlHandler）===
     def wifi_connect(self, event=None):
         self.wifi_control.wifi_connect(event)

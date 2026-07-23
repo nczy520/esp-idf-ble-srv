@@ -48,6 +48,7 @@ from client.constants import (
     BLE_LED_CTRL_CHAR_UUID,
     BLE_LED_COLOR_CHAR_UUID,
     BLE_LED_EFFECT_CHAR_UUID,
+    BLE_LED_LAYOUT_CHAR_UUID,
     BLE_LED_CTRL_ON,
     BLE_LED_CTRL_OFF,
     BLE_WIFI_STATUS_CHAR_UUID,
@@ -96,6 +97,72 @@ EFFECT_MAP = {
     "闪烁": 2,
     "彩虹": 3,
     "频闪": 4,
+    "时钟": 70,
+    "流光追逐": 5,
+    "色彩擦除": 6,
+    "剧场追逐": 7,
+    "波浪": 8,
+    "流星": 9,
+    "火焰": 10,
+    "扫描": 11,
+    "跑马灯": 12,
+    "双色追逐": 13,
+    "像素雨": 14,
+    "随机闪烁": 15,
+    "渐变瀑布": 16,
+    "心形": 17,
+    "棋盘格": 18,
+    "光环": 19,
+    "闪电": 20,
+    "爆炸": 21,
+    "雪花": 22,
+    "激光扫描": 23,
+    "水流": 24,
+    "星星闪烁": 25,
+    "极光": 26,
+    "旋转彩虹": 27,
+    "涟漪": 28,
+    "马赛克": 29,
+    "音频律动": 30,
+    "方块": 31,
+    "十字架": 32,
+    "螺旋": 33,
+    "菱形": 34,
+    "三角形": 35,
+    "圆形脉冲": 36,
+    "弹球": 37,
+    "贪吃蛇": 38,
+    "生命游戏": 39,
+    "字幕滚动": 40,
+    "笑脸": 41,
+    "海洋波浪": 42,
+    "萤火虫": 43,
+    "岩浆": 44,
+    "云雾": 45,
+    "日出日落": 46,
+    "星空": 47,
+    "分形": 48,
+    "万花筒": 49,
+    "全息图": 50,
+    "全屏渐变": 51,
+    "对角线扫描": 52,
+    "网格脉冲": 53,
+    "色块拼图": 54,
+    "圣诞树": 55,
+    "烟花": 56,
+    "灯笼": 57,
+    "彩带": 58,
+    "干涉条纹": 59,
+    "等高线": 60,
+    "温度图": 61,
+    "细胞分裂": 62,
+    "DNA双螺旋": 63,
+    "矩阵代码雨": 64,
+    "像素粒子": 65,
+    "光剑": 66,
+    "俄罗斯方块": 67,
+    "棋盘扫描": 68,
+    "彩虹瀑布": 69,
 }
 
 OTA_ERROR_NAMES = {
@@ -848,6 +915,24 @@ class BleCore:
             return False
         self._log(f"LED 特效已设置: effect={effect}, speed={speed}", "success")
         return True
+
+    async def led_set_layout(self, rows, cols):
+        if rows <= 0 or cols <= 0 or rows > 255 or cols > 255:
+            self._log("LED 布局参数无效，rows/cols 必须在 1-255 之间", "error")
+            return False
+        data = bytes([rows, cols])
+        if not await self._write_gatt(BLE_LED_LAYOUT_CHAR_UUID, data):
+            return False
+        self._log(f"LED 布局已设置: {rows}x{cols} (共 {rows*cols} 颗)", "success")
+        return True
+
+    async def led_get_layout(self):
+        data = await self._read_gatt(BLE_LED_LAYOUT_CHAR_UUID)
+        if data and len(data) >= 2:
+            rows, cols = data[0], data[1]
+            self._log(f"LED 布局: {rows}x{cols} (共 {rows*cols} 颗)", "rx")
+            return (rows, cols)
+        return None
 
     async def wifi_connect(self, ssid, password):
         ssid_bytes = ssid.encode('utf-8')[:32]
